@@ -1,0 +1,14 @@
+# Virtual environments
+.venv/
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Local analysis outputs (the sample DOCX fixture in samples/ stays tracked)
+heading-analysis.csv
+*-analysis.csv
