@@ -1,0 +1,8 @@
+{
+  "TechDocker": {
+    "project_id": "techdocker",
+    "production_branch": "main",
+    "document_name": "techdocker_test1.docx",
+    "document_location": "samples/techdocker_test1.docx"
+  }
+}

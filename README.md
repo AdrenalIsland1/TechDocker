@@ -73,13 +73,34 @@ line-break segments, and the scoring outcome.
 pytest -v
 ```
 
+## Working GitHub-to-DOCX Demo
+
+A push to `main` runs the GitHub Actions workflow
+([.github/workflows/documentation-update.yml](.github/workflows/documentation-update.yml)),
+which:
+
+1. runs the full test suite,
+2. detects the files changed by the push (`git diff` between the before/after
+   commits),
+3. resolves the configured project document from `config/projects.json`,
+4. appends a marked "Automated Documentation Update" section (timestamp,
+   commit metadata, changed-file list) to `samples/techdocker_test1.docx`,
+5. commits the updated DOCX back to the repository as `github-actions[bot]`.
+
+The workflow guards against infinite loops twice: pushes that only touch the
+demo DOCX are ignored (`paths-ignore`), and runs triggered by the bot user are
+skipped. The demo uses a local sample DOCX instead of SharePoint — SharePoint
+retrieval/upload and LLM-based placement are future phases. The updater also
+runs locally with `python3 -m src.demo_docx_updater`, falling back to
+`HEAD~1..HEAD`.
+
 ## Project status
 
 - DOCX feature extraction is complete.
 - Heading scoring (official styles + formatting heuristic) is implemented.
 - CSV inspection reporting is working.
 - All DOCX tests are passing.
-- GitHub-triggered automation is planned next.
+- GitHub push-triggered automation now updates and commits the demo DOCX.
 
 ## Roadmap
 

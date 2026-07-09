@@ -1,0 +1,65 @@
+name: TechDocker Documentation Automation Demo
+
+on:
+  push:
+    branches:
+      - main
+    # Loop guard 1: pushes that only touch the demo DOCX (i.e. the commit this
+    # workflow itself makes) do not retrigger the workflow.
+    paths-ignore:
+      - samples/techdocker_test1.docx
+  workflow_dispatch:
+
+# Needed so the workflow can push the updated demo DOCX back.
+permissions:
+  contents: write
+
+jobs:
+  automation-demo:
+    runs-on: ubuntu-latest
+    # Loop guard 2: never run for commits made by the workflow's own bot user.
+    if: github.actor != 'github-actions[bot]'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Full history so git diff can compare the before/after commits.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -v
+
+      - name: Run automation demo summary
+        env:
+          # github.event.before only exists for push events; on manual
+          # workflow_dispatch this is empty and the script handles it.
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        run: python3 -m src.automation_demo
+
+      - name: Update demo DOCX document
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        run: python3 -m src.demo_docx_updater
+
+      - name: Commit updated demo DOCX
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add samples/techdocker_test1.docx
+          if git diff --cached --quiet; then
+            echo "No demo DOCX changes to commit."
+          else
+            git commit -m "Update demo DOCX from automation [skip ci]"
+            git push
+          fi
