@@ -94,6 +94,34 @@ retrieval/upload and LLM-based placement are future phases. The updater also
 runs locally with `python3 -m src.demo_docx_updater`, falling back to
 `HEAD~1..HEAD`.
 
+## Persistent Document Skeleton Architecture
+
+The full feature-based DOCX parse is expensive, so it runs **once**:
+
+```bash
+python3 -m src.document_skeleton_builder
+```
+
+This parses the configured document and stores its heading structure as JSON
+at `artifacts/skeletons/techdocker_skeleton.json` — one entry per section with
+a stable slug id, level, parent, path, order, and content hash.
+
+On subsequent pushes the updater avoids full parsing entirely:
+
+1. `git diff` produces the changed files,
+2. a change summary is built from them,
+3. the stored skeleton JSON is loaded (and built first if missing),
+4. `src/change_router.py` decides whether the update belongs to an existing
+   section or needs a new heading (simple keyword rules today — an LLM will
+   replace this in a future phase),
+5. the DOCX is updated under the routed heading (found by scanning paragraph
+   text, not by re-parsing),
+6. the skeleton JSON is rewritten **only** when a new section was created —
+   structure changes are the only thing that invalidates it.
+
+If the routed heading cannot be found in the DOCX, the update is appended to
+the end with a warning.
+
 ## Project status
 
 - DOCX feature extraction is complete.

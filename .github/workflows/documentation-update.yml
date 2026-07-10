@@ -4,10 +4,11 @@ on:
   push:
     branches:
       - main
-    # Loop guard 1: pushes that only touch the demo DOCX (i.e. the commit this
-    # workflow itself makes) do not retrigger the workflow.
+    # Loop guard 1: pushes that only touch the demo DOCX or the skeleton
+    # (i.e. the commit this workflow itself makes) do not retrigger it.
     paths-ignore:
       - samples/techdocker_test1.docx
+      - artifacts/skeletons/**
   workflow_dispatch:
 
 # Needed so the workflow can push the updated demo DOCX back.
@@ -52,13 +53,13 @@ jobs:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: python3 -m src.demo_docx_updater
 
-      - name: Commit updated demo DOCX
+      - name: Commit updated demo DOCX and skeleton
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add samples/techdocker_test1.docx
+          git add samples/techdocker_test1.docx artifacts/skeletons/techdocker_skeleton.json
           if git diff --cached --quiet; then
-            echo "No demo DOCX changes to commit."
+            echo "No demo DOCX or skeleton changes to commit."
           else
             git commit -m "Update demo DOCX from automation [skip ci]"
             git push

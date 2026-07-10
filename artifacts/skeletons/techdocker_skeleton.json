@@ -1,0 +1,46 @@
+{
+  "source_document": "samples/techdocker_test1.docx",
+  "project_id": "techdocker",
+  "generated_at": "2026-07-10 05:36:53 UTC",
+  "sections": [
+    {
+      "section_id": "1-1-api-configuration",
+      "heading": "1.1 API Configuration:",
+      "level": 2,
+      "parent_id": null,
+      "path": "1.1 API Configuration:",
+      "order": 1,
+      "summary": "",
+      "content_hash": "e94448b912eb760e15efe4d67b48d559cc74867ff8e8e394a7faae310b26d843",
+      "source_document": "samples/techdocker_test1.docx",
+      "classification": "heading",
+      "score": 90
+    },
+    {
+      "section_id": "1-2-database-layer",
+      "heading": "1.2 Database Layer:",
+      "level": 2,
+      "parent_id": null,
+      "path": "1.2 Database Layer:",
+      "order": 2,
+      "summary": "",
+      "content_hash": "e7fc5e7097e9842384be69cb83baf9f2bf1518a3e918c66d55342850cd4b6135",
+      "source_document": "samples/techdocker_test1.docx",
+      "classification": "heading",
+      "score": 90
+    },
+    {
+      "section_id": "validation-rules",
+      "heading": "Validation Rules:",
+      "level": 1,
+      "parent_id": null,
+      "path": "Validation Rules:",
+      "order": 3,
+      "summary": "",
+      "content_hash": null,
+      "source_document": "samples/techdocker_test1.docx",
+      "classification": "probable_heading",
+      "score": 65
+    }
+  ]
+}

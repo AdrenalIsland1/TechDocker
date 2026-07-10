@@ -4,12 +4,17 @@ Run as ``python3 -m src.demo_docx_updater`` — inside GitHub Actions (where the
 ``GITHUB_*`` environment variables are provided) or locally with sensible
 fallbacks (repository ``TechDocker``, current branch, ``HEAD~1..HEAD``).
 
-The updater resolves the pushed repository to its configured document via
-``config/projects.json``, detects the changed files of the push, and appends a
-clearly marked "Automated Documentation Update" section to the demo DOCX. In
-the real pipeline the document would come from SharePoint and the update would
-be LLM-placed; this demo proves the trigger-to-document write path end to end
-with a local sample file.
+Skeleton-aware flow (no full parse on routine pushes):
+
+1. detect the changed files of the push,
+2. load the stored skeleton JSON (build it first — one full parse — if absent),
+3. build a simple change summary and route it via :mod:`src.change_router`,
+4. insert a marked update block under the routed heading (found by scanning
+   paragraph text, not by re-parsing), or append a new section,
+5. update the skeleton JSON only when a new section was created.
+
+If the routed heading cannot be found in the DOCX, the block is appended to
+the end with a warning. SharePoint and LLM routing are future phases.
 """
 
 from __future__ import annotations
@@ -24,8 +29,19 @@ from typing import Mapping, Optional
 from docx import Document
 
 from src.automation_demo import extract_repository_name, is_missing_sha
+from src.change_router import CREATE_NEW, RoutingDecision, route_change
+from src.document_skeleton_builder import (
+    build_and_save_skeleton,
+    skeleton_path_for,
+)
 from src.git_change_detector import ChangedFile, build_change_set
 from src.project_resolver import ProjectConfig, resolve_project
+from src.skeleton_store import (
+    append_section,
+    find_section_by_id,
+    load_skeleton,
+    save_skeleton,
+)
 
 AUTOMATED_SECTION_TITLE = "Automated Documentation Update"
 AUTOMATED_SECTION_NOTE = (
@@ -43,6 +59,11 @@ class UpdateResult:
     repository: str
     branch: str
     changed_files: list[ChangedFile] = field(default_factory=list)
+    decision: Optional[RoutingDecision] = None
+    placement: str = ""  # e.g. "under 'System Overview'" / "appended to end"
+    skeleton_path: Optional[Path] = None
+    skeleton_created: bool = False
+    skeleton_updated: bool = False
     warnings: list[str] = field(default_factory=list)
 
 
@@ -61,6 +82,17 @@ def _local_git_output(args: list[str], repo_path: str) -> Optional[str]:
     return result.stdout.strip() or None
 
 
+def build_change_summary(changed_files: list[ChangedFile]) -> str:
+    """One-line textual summary of a push's changed files."""
+    if not changed_files:
+        return "No changed files were available for this run."
+    parts = [f"{changed.change_type} {changed.path}" for changed in changed_files]
+    return f"{len(changed_files)} file(s) changed: " + "; ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# DOCX writing helpers
+# ---------------------------------------------------------------------------
 def _style_exists(document: Document, style_name: str) -> bool:
     """True when the document defines the named style.
 
@@ -98,9 +130,25 @@ def _add_bullet_safely(document: Document, text: str):
     return document.add_paragraph(f"- {text}")
 
 
-def append_update_section(
-    document_path: str | Path,
+def _find_heading_paragraph(document: Document, heading_text: str):
+    """Find the paragraph whose text equals the heading (case-insensitive).
+
+    Plain text scan by design: routine pushes must not re-run the full
+    feature-based parser.
+    """
+    wanted = (heading_text or "").strip().lower()
+    if not wanted:
+        return None
+    for paragraph in document.paragraphs:
+        if paragraph.text.strip().lower() == wanted:
+            return paragraph
+    return None
+
+
+def _build_update_block(
+    document: Document,
     *,
+    block_level: int,
     repository: str,
     branch: str,
     actor: str,
@@ -108,11 +156,16 @@ def append_update_section(
     after_sha: str,
     project: ProjectConfig,
     changed_files: list[ChangedFile],
-) -> None:
-    """Append the marked update section to the DOCX and save it in place."""
-    document = Document(str(document_path))
+) -> list:
+    """Append the marked update block at the end; return its paragraphs.
 
-    _add_heading_safely(document, AUTOMATED_SECTION_TITLE, level=1)
+    The caller may relocate the returned paragraphs under a target heading.
+    """
+    paragraphs = []
+
+    paragraphs.append(
+        _add_heading_safely(document, AUTOMATED_SECTION_TITLE, level=block_level)
+    )
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     for label, value in (
@@ -125,29 +178,41 @@ def append_update_section(
         ("Project ID", project.project_id),
         ("Document", project.document_name),
     ):
-        document.add_paragraph(f"{label}: {value}")
+        paragraphs.append(document.add_paragraph(f"{label}: {value}"))
 
-    _add_heading_safely(document, "Changed Files", level=2)
+    paragraphs.append(
+        _add_heading_safely(document, "Changed Files", level=min(block_level + 1, 9))
+    )
     if changed_files:
         for changed in changed_files:
             if changed.old_path:
                 text = f"{changed.change_type}: {changed.old_path} -> {changed.path}"
             else:
                 text = f"{changed.change_type}: {changed.path}"
-            _add_bullet_safely(document, text)
+            paragraphs.append(_add_bullet_safely(document, text))
     else:
-        document.add_paragraph(
-            "No changed files were available for this run "
-            "(first push or manual trigger)."
+        paragraphs.append(
+            document.add_paragraph(
+                "No changed files were available for this run "
+                "(first push or manual trigger)."
+            )
         )
 
-    document.add_paragraph(AUTOMATED_SECTION_NOTE)
+    paragraphs.append(document.add_paragraph(AUTOMATED_SECTION_NOTE))
+    return paragraphs
 
-    document.save(str(document_path))
+
+def _relocate_after(anchor_paragraph, block_paragraphs) -> None:
+    """Move the block (created at the document end) directly after the anchor."""
+    for paragraph in reversed(block_paragraphs):
+        anchor_paragraph._p.addnext(paragraph._p)
 
 
+# ---------------------------------------------------------------------------
+# main flow
+# ---------------------------------------------------------------------------
 def run_update(env: Mapping[str, str], repo_path: str = ".") -> UpdateResult:
-    """Resolve project + changed files from the environment, update the DOCX."""
+    """Detect the push, route it via the skeleton, and update the DOCX."""
     warnings: list[str] = []
 
     repository = extract_repository_name(env.get("GITHUB_REPOSITORY", ""))
@@ -180,6 +245,7 @@ def run_update(env: Mapping[str, str], repo_path: str = ".") -> UpdateResult:
             f"(from document_location of {repository!r})"
         )
 
+    # Changed files of this push.
     changed_files: list[ChangedFile] = []
     if is_missing_sha(before_sha):
         before_sha = None
@@ -204,16 +270,74 @@ def run_update(env: Mapping[str, str], repo_path: str = ".") -> UpdateResult:
                 "updating the document with an empty changed-file list."
             )
 
-    append_update_section(
-        document_path,
-        repository=repository,
-        branch=branch,
-        actor=actor,
-        before_sha=before_sha,
-        after_sha=after_sha,
-        project=project,
-        changed_files=changed_files,
-    )
+    # Skeleton: load the stored one; build it once if missing.
+    skeleton_path = skeleton_path_for(project, repo_path)
+    skeleton_created = False
+    if skeleton_path.exists():
+        skeleton = load_skeleton(skeleton_path)
+    else:
+        skeleton, skeleton_path = build_and_save_skeleton(project, repo_path)
+        skeleton_created = True
+
+    # Route the change (rule-based today, LLM later).
+    change_summary = build_change_summary(changed_files)
+    decision = route_change(change_summary, changed_files, skeleton)
+
+    # Apply the update to the DOCX.
+    document = Document(str(document_path))
+    skeleton_updated = False
+
+    if decision.decision == CREATE_NEW:
+        _add_heading_safely(document, decision.new_heading, level=1)
+        _build_update_block(
+            document,
+            block_level=2,
+            repository=repository,
+            branch=branch,
+            actor=actor,
+            before_sha=before_sha,
+            after_sha=after_sha,
+            project=project,
+            changed_files=changed_files,
+        )
+        placement = f"new section {decision.new_heading!r} appended"
+
+        append_section(skeleton, heading=decision.new_heading, level=1)
+        save_skeleton(skeleton, skeleton_path)
+        skeleton_updated = True
+    else:
+        anchor = _find_heading_paragraph(document, decision.target_heading)
+        target_section = (
+            find_section_by_id(skeleton, decision.target_section_id)
+            if decision.target_section_id
+            else None
+        )
+        block_level = min((target_section.level if target_section else 1) + 1, 9)
+
+        block = _build_update_block(
+            document,
+            block_level=block_level,
+            repository=repository,
+            branch=branch,
+            actor=actor,
+            before_sha=before_sha,
+            after_sha=after_sha,
+            project=project,
+            changed_files=changed_files,
+        )
+
+        if anchor is not None:
+            _relocate_after(anchor, block)
+            placement = f"under existing heading {decision.target_heading!r}"
+        else:
+            # Fallback: the block stays where it was built — the end.
+            placement = "appended to end (target heading not found)"
+            warnings.append(
+                f"Target heading {decision.target_heading!r} was not found "
+                "in the DOCX; appended the update to the end instead."
+            )
+
+    document.save(str(document_path))
 
     return UpdateResult(
         document_path=document_path,
@@ -221,6 +345,11 @@ def run_update(env: Mapping[str, str], repo_path: str = ".") -> UpdateResult:
         repository=repository,
         branch=branch,
         changed_files=changed_files,
+        decision=decision,
+        placement=placement,
+        skeleton_path=skeleton_path,
+        skeleton_created=skeleton_created,
+        skeleton_updated=skeleton_updated,
         warnings=warnings,
     )
 
@@ -235,7 +364,14 @@ def format_result(result: UpdateResult) -> str:
         f"Project ID:          {result.project_id}",
         f"Repository / branch: {result.repository} / {result.branch}",
         f"Changed files:       {len(result.changed_files)}",
+        f"Routing decision:    {result.decision.decision if result.decision else '(none)'}",
+        f"Placement:           {result.placement}",
+        f"Skeleton:            {result.skeleton_path}"
+        + (" (created)" if result.skeleton_created else "")
+        + (" (updated)" if result.skeleton_updated else ""),
     ]
+    if result.decision is not None:
+        lines.append(f"Reasoning:           {result.decision.reasoning}")
     if result.warnings:
         lines += [f"! {warning}" for warning in result.warnings]
     lines.append("=" * 60)
