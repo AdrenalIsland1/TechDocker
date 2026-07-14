@@ -111,6 +111,40 @@ tests/test_summary_updater.py
 - `tests/test_summary_pipeline.py`
 - `tests/test_summary_updater.py`
 
+
+<!-- TECHDOCKER_UPDATE_START -->
+### Automated Change Update - 2026-07-14 05:46 UTC
+
+Repository: TechDocker
+Branch: main
+Actor: AdrenalIsland1
+Before SHA: 30e3e6aa904ddb96ad94dcf3c91d28bccff9c8d3
+After SHA: 45ac6df264a4e759d1d1b91737939848688788af
+
+Changed files:
+- modified: .github/workflows/documentation-update.yml
+- modified: README.md
+- added: artifacts/change_packages/latest_change_summary.json
+- added: artifacts/skeletons/base_skeleton.json
+- added: artifacts/summaries/base_original_summary.md
+- added: artifacts/summaries/base_updated_summary.md
+- deleted: samples/~$chdocker_test1.docx
+- added: src/change_summary_generator.py
+- added: src/markdown_summary_parser.py
+- added: src/project_summary_generator.py
+- added: src/repo_context_collector.py
+- added: src/summary_change_router.py
+- added: src/summary_skeleton_builder.py
+- added: src/summary_skeleton_store.py
+- added: src/summary_updater.py
+- added: tests/test_markdown_summary_parser.py
+- added: tests/test_summary_pipeline.py
+- added: tests/test_summary_updater.py
+
+Summary:
+18 file(s) changed (15 added, 1 deleted, 2 modified): modified .github/workflows/documentation-update.yml; modified README.md; added artifacts/change_packages/latest_change_summary.json; added artifacts/skeletons/base_skeleton.json; added artifacts/summaries/base_original_summary.md; added artifacts/summaries/base_updated_summary.md; deleted samples/~$chdocker_test1.docx; added src/change_summary_generator.py; added src/markdown_summary_parser.py; added src/project_summary_generator.py (and 8 more).
+<!-- TECHDOCKER_UPDATE_END -->
+
 ## Configuration
 
 - `config/projects.json`

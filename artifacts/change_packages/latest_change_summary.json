@@ -1,9 +1,9 @@
 {
   "repository": "TechDocker",
   "branch": "main",
-  "actor": "local-user",
-  "before_sha": "HEAD~1",
-  "after_sha": "HEAD",
+  "actor": "AdrenalIsland1",
+  "before_sha": "30e3e6aa904ddb96ad94dcf3c91d28bccff9c8d3",
+  "after_sha": "45ac6df264a4e759d1d1b91737939848688788af",
   "changed_files": [
     {
       "path": ".github/workflows/documentation-update.yml",
@@ -16,41 +16,86 @@
       "old_path": null
     },
     {
-      "path": "artifacts/skeletons/techdocker_skeleton.json",
+      "path": "artifacts/change_packages/latest_change_summary.json",
       "change_type": "added",
       "old_path": null
     },
     {
-      "path": "samples/techdocker_test1.docx",
-      "change_type": "modified",
-      "old_path": null
-    },
-    {
-      "path": "src/change_router.py",
+      "path": "artifacts/skeletons/base_skeleton.json",
       "change_type": "added",
       "old_path": null
     },
     {
-      "path": "src/demo_docx_updater.py",
-      "change_type": "modified",
-      "old_path": null
-    },
-    {
-      "path": "src/document_skeleton_builder.py",
+      "path": "artifacts/summaries/base_original_summary.md",
       "change_type": "added",
       "old_path": null
     },
     {
-      "path": "src/skeleton_store.py",
+      "path": "artifacts/summaries/base_updated_summary.md",
       "change_type": "added",
       "old_path": null
     },
     {
-      "path": "tests/test_skeleton_and_router.py",
+      "path": "samples/~$chdocker_test1.docx",
+      "change_type": "deleted",
+      "old_path": null
+    },
+    {
+      "path": "src/change_summary_generator.py",
+      "change_type": "added",
+      "old_path": null
+    },
+    {
+      "path": "src/markdown_summary_parser.py",
+      "change_type": "added",
+      "old_path": null
+    },
+    {
+      "path": "src/project_summary_generator.py",
+      "change_type": "added",
+      "old_path": null
+    },
+    {
+      "path": "src/repo_context_collector.py",
+      "change_type": "added",
+      "old_path": null
+    },
+    {
+      "path": "src/summary_change_router.py",
+      "change_type": "added",
+      "old_path": null
+    },
+    {
+      "path": "src/summary_skeleton_builder.py",
+      "change_type": "added",
+      "old_path": null
+    },
+    {
+      "path": "src/summary_skeleton_store.py",
+      "change_type": "added",
+      "old_path": null
+    },
+    {
+      "path": "src/summary_updater.py",
+      "change_type": "added",
+      "old_path": null
+    },
+    {
+      "path": "tests/test_markdown_summary_parser.py",
+      "change_type": "added",
+      "old_path": null
+    },
+    {
+      "path": "tests/test_summary_pipeline.py",
+      "change_type": "added",
+      "old_path": null
+    },
+    {
+      "path": "tests/test_summary_updater.py",
       "change_type": "added",
       "old_path": null
     }
   ],
-  "generated_summary": "9 file(s) changed (5 added, 4 modified): modified .github/workflows/documentation-update.yml; modified README.md; added artifacts/skeletons/techdocker_skeleton.json; modified samples/techdocker_test1.docx; added src/change_router.py; modified src/demo_docx_updater.py; added src/document_skeleton_builder.py; added src/skeleton_store.py; added tests/test_skeleton_and_router.py.",
-  "generated_at": "2026-07-14 05:01:13 UTC"
+  "generated_summary": "18 file(s) changed (15 added, 1 deleted, 2 modified): modified .github/workflows/documentation-update.yml; modified README.md; added artifacts/change_packages/latest_change_summary.json; added artifacts/skeletons/base_skeleton.json; added artifacts/summaries/base_original_summary.md; added artifacts/summaries/base_updated_summary.md; deleted samples/~$chdocker_test1.docx; added src/change_summary_generator.py; added src/markdown_summary_parser.py; added src/project_summary_generator.py (and 8 more).",
+  "generated_at": "2026-07-14 05:46:56 UTC"
 }
