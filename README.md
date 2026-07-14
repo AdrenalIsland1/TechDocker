@@ -73,28 +73,55 @@ line-break segments, and the scoring outcome.
 pytest -v
 ```
 
-## Working GitHub-to-DOCX Demo
+## GitHub Project Summary Pipeline
 
-A push to `main` runs the GitHub Actions workflow
-([.github/workflows/documentation-update.yml](.github/workflows/documentation-update.yml)),
-which:
+Official project documents cannot be accessed due to security restrictions,
+so the active pipeline works from the GitHub repository itself. The
+repository's own context (file tree, source, tests, docs, config — never
+secrets, binaries, or official documents) is summarized into three core
+artifacts:
 
-1. runs the full test suite,
-2. detects the files changed by the push (`git diff` between the before/after
-   commits),
-3. resolves the configured project document from `config/projects.json`,
-4. appends a marked "Automated Documentation Update" section (timestamp,
-   commit metadata, changed-file list) to `samples/techdocker_test1.docx`,
-5. commits the updated DOCX back to the repository as `github-actions[bot]`.
+- `artifacts/summaries/base_original_summary.md` — the baseline technical
+  summary, generated once. **Never modified** during normal update runs;
+  regenerate only with `python3 -m src.project_summary_generator --force`.
+- `artifacts/skeletons/base_skeleton.json` — the routing structure, built
+  from **`base_original_summary.md`** and its deterministic Markdown headings
+  (`# Project Technical Summary`, `## System Overview`, `## Core Modules`, …).
+  It changes **only** when a new heading/subheading is needed, in which case
+  the new section is appended — it is never rebuilt from the reviewable copy.
+- `artifacts/summaries/base_updated_summary.md` — the reviewable copy.
+  Starts identical to the baseline; every push's change block is inserted
+  here under the routed section. Reviewers diff this against the original.
 
-The workflow guards against infinite loops twice: pushes that only touch the
-demo DOCX are ignored (`paths-ignore`), and runs triggered by the bot user are
-skipped. The demo uses a local sample DOCX instead of SharePoint — SharePoint
-retrieval/upload and LLM-based placement are future phases. The updater also
-runs locally with `python3 -m src.demo_docx_updater`, falling back to
-`HEAD~1..HEAD`.
+On every push to `main`, the workflow
+([.github/workflows/documentation-update.yml](.github/workflows/documentation-update.yml))
+runs the tests, then `python3 -m src.summary_updater`, which:
 
-## Persistent Document Skeleton Architecture
+1. detects the changed files with `git diff`,
+2. writes `artifacts/change_packages/latest_change_summary.json` (files,
+   SHAs, actor, branch, generated change summary),
+3. routes the change against `base_skeleton.json` (rule-based today,
+   LLM-ready interface),
+4. inserts a marked `<!-- TECHDOCKER_UPDATE_START/END -->` block into
+   `base_updated_summary.md` under the routed section,
+5. rebuilds the skeleton only when a new section had to be created,
+6. commits the four artifacts back as `github-actions[bot]` with `[skip ci]`.
+
+Summary generation sits behind a provider interface: the current
+`LocalDeterministicSummaryProvider` needs no network or tokens (safe for
+tests and demos); Copilot/LLM generation is a future provider behind the
+same interface.
+
+## Legacy DOCX Pipeline
+
+The DOCX parser, heading scorer, analyzer, and DOCX skeleton/updater modules
+remain in the repository as previous work and backup, but they are **no
+longer the active production path** after the security-driven direction
+change — the active workflow does not read or update DOCX files anymore.
+The standalone analyzer still works for inspection:
+`python3 -m src.analyze_headings path/to/document.docx`.
+
+## Persistent Document Skeleton Architecture (legacy DOCX pipeline)
 
 The full feature-based DOCX parse is expensive, so it runs **once**:
 
@@ -124,18 +151,20 @@ the end with a warning.
 
 ## Project status
 
-- DOCX feature extraction is complete.
-- Heading scoring (official styles + formatting heuristic) is implemented.
-- CSV inspection reporting is working.
-- All DOCX tests are passing.
-- GitHub push-triggered automation now updates and commits the demo DOCX.
+- Active pipeline: GitHub push → change detection → summary routing →
+  `base_updated_summary.md` review artifact (Markdown-based, no DOCX).
+- Deterministic summary provider in place; Copilot/LLM provider is a stub.
+- Legacy DOCX feature extraction, heading scoring, and CSV inspection remain
+  available but inactive.
+- All tests are passing.
 
 ## Roadmap
 
-1. GitHub-triggered automation: analyze changed documents automatically on push.
-2. Feed the detected structure to an LLM for controlled document updates.
-3. Additional strong combination rules tuned on more real documents.
-4. Write-back support for controlled DOCX editing (analysis stays read-only).
+1. Replace the deterministic summary provider with Copilot/LLM generation.
+2. Replace rule-based routing with LLM routing over the change summary.
+3. Richer change summaries generated from actual diffs, not just file lists.
+4. Review/approval flow comparing `base_updated_summary.md` against the
+   baseline before merging documentation changes.
 
 ## Documentation
 

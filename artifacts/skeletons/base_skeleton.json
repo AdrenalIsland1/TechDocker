@@ -1,0 +1,88 @@
+{
+  "project_id": "techdocker",
+  "source_summary_path": "artifacts/summaries/base_original_summary.md",
+  "generated_at": "2026-07-14 05:01:03 UTC",
+  "sections": [
+    {
+      "section_id": "project-technical-summary",
+      "heading": "Project Technical Summary",
+      "level": 1,
+      "parent_id": null,
+      "path": "Project Technical Summary",
+      "order": 1,
+      "content_hash": "b5f76f8400c3a80be01bf55a4bba5a4b557147cdf8a61afd0fd2f6a99132d75e"
+    },
+    {
+      "section_id": "project-technical-summary-system-overview",
+      "heading": "System Overview",
+      "level": 2,
+      "parent_id": "project-technical-summary",
+      "path": "Project Technical Summary > System Overview",
+      "order": 2,
+      "content_hash": "e1e251c4cba3035de3f4204882798b2f4d062a659fc694b8d9c057e337396af9"
+    },
+    {
+      "section_id": "project-technical-summary-repository-structure",
+      "heading": "Repository Structure",
+      "level": 2,
+      "parent_id": "project-technical-summary",
+      "path": "Project Technical Summary > Repository Structure",
+      "order": 3,
+      "content_hash": "9f73a753e50e8f095e1c31ade76473a21cd7fd491d26073dceb1c6e3a9ed07c8"
+    },
+    {
+      "section_id": "project-technical-summary-core-modules",
+      "heading": "Core Modules",
+      "level": 2,
+      "parent_id": "project-technical-summary",
+      "path": "Project Technical Summary > Core Modules",
+      "order": 4,
+      "content_hash": "8576f4316e167c766e20d185d2332d24385351c2a8e46780f23c56aae0768280"
+    },
+    {
+      "section_id": "project-technical-summary-automation-pipeline",
+      "heading": "Automation Pipeline",
+      "level": 2,
+      "parent_id": "project-technical-summary",
+      "path": "Project Technical Summary > Automation Pipeline",
+      "order": 5,
+      "content_hash": "8ef782d2c2d77d5285ae5a3177bf2c6a58a1ae28ae775789e73ca8e3387ccea1"
+    },
+    {
+      "section_id": "project-technical-summary-testing-strategy",
+      "heading": "Testing Strategy",
+      "level": 2,
+      "parent_id": "project-technical-summary",
+      "path": "Project Technical Summary > Testing Strategy",
+      "order": 6,
+      "content_hash": "8517fb689c0feeb849d1760bb6e58d9c3cda6fbd60c5660df76e595856b0cb33"
+    },
+    {
+      "section_id": "project-technical-summary-configuration",
+      "heading": "Configuration",
+      "level": 2,
+      "parent_id": "project-technical-summary",
+      "path": "Project Technical Summary > Configuration",
+      "order": 7,
+      "content_hash": "f4a3aafdf503b4ce0323858ddd0071470da550ba4618854f4d1ee78ef07834ed"
+    },
+    {
+      "section_id": "project-technical-summary-deployment-and-ci",
+      "heading": "Deployment and CI",
+      "level": 2,
+      "parent_id": "project-technical-summary",
+      "path": "Project Technical Summary > Deployment and CI",
+      "order": 8,
+      "content_hash": "d9678bb131732a172db29af03a79bcf5ca26a5f2d3cf42d857768a63a314aa83"
+    },
+    {
+      "section_id": "project-technical-summary-known-limitations",
+      "heading": "Known Limitations",
+      "level": 2,
+      "parent_id": "project-technical-summary",
+      "path": "Project Technical Summary > Known Limitations",
+      "order": 9,
+      "content_hash": "050ca28eb6add25a3dac27ceb8338ded8f5902799ada62e29c2aff307c2c264a"
+    }
+  ]
+}

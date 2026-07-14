@@ -4,19 +4,18 @@ on:
   push:
     branches:
       - main
-    # Loop guard 1: pushes that only touch the demo DOCX or the skeleton
-    # (i.e. the commit this workflow itself makes) do not retrigger it.
+    # Loop guard 1: pushes that only touch generated artifacts (i.e. the
+    # commit this workflow itself makes) do not retrigger it.
     paths-ignore:
-      - samples/techdocker_test1.docx
-      - artifacts/skeletons/**
+      - artifacts/**
   workflow_dispatch:
 
-# Needed so the workflow can push the updated demo DOCX back.
+# Needed so the workflow can push the updated summary artifacts back.
 permissions:
   contents: write
 
 jobs:
-  automation-demo:
+  summary-automation:
     runs-on: ubuntu-latest
     # Loop guard 2: never run for commits made by the workflow's own bot user.
     if: github.actor != 'github-actions[bot]'
@@ -41,26 +40,30 @@ jobs:
       - name: Run tests
         run: pytest -v
 
-      - name: Run automation demo summary
+      - name: Log push and project context
         env:
           # github.event.before only exists for push events; on manual
-          # workflow_dispatch this is empty and the script handles it.
+          # workflow_dispatch this is empty and the scripts handle it.
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: python3 -m src.automation_demo
 
-      - name: Update demo DOCX document
+      - name: Update project summary
         env:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
-        run: python3 -m src.demo_docx_updater
+        run: python3 -m src.summary_updater
 
-      - name: Commit updated demo DOCX and skeleton
+      - name: Commit updated summary artifacts
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add samples/techdocker_test1.docx artifacts/skeletons/techdocker_skeleton.json
+          git add \
+            artifacts/summaries/base_original_summary.md \
+            artifacts/summaries/base_updated_summary.md \
+            artifacts/skeletons/base_skeleton.json \
+            artifacts/change_packages/latest_change_summary.json
           if git diff --cached --quiet; then
-            echo "No demo DOCX or skeleton changes to commit."
+            echo "No summary artifact changes to commit."
           else
-            git commit -m "Update demo DOCX from automation [skip ci]"
+            git commit -m "Update project summary from automation [skip ci]"
             git push
           fi
