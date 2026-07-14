@@ -2,11 +2,11 @@
   "repository": "TechDocker",
   "branch": "main",
   "actor": "AdrenalIsland1",
-  "before_sha": "30e3e6aa904ddb96ad94dcf3c91d28bccff9c8d3",
-  "after_sha": "45ac6df264a4e759d1d1b91737939848688788af",
+  "before_sha": "7c3e133c67466491b08a1774f4b134b0dfac56e8",
+  "after_sha": "2815ef7ab75e7c9f248f8ddcb8fc798eec9e2072",
   "changed_files": [
     {
-      "path": ".github/workflows/documentation-update.yml",
+      "path": ".gitignore",
       "change_type": "modified",
       "old_path": null
     },
@@ -16,86 +16,46 @@
       "old_path": null
     },
     {
-      "path": "artifacts/change_packages/latest_change_summary.json",
-      "change_type": "added",
-      "old_path": null
-    },
-    {
-      "path": "artifacts/skeletons/base_skeleton.json",
-      "change_type": "added",
-      "old_path": null
-    },
-    {
-      "path": "artifacts/summaries/base_original_summary.md",
-      "change_type": "added",
-      "old_path": null
-    },
-    {
-      "path": "artifacts/summaries/base_updated_summary.md",
-      "change_type": "added",
-      "old_path": null
-    },
-    {
-      "path": "samples/~$chdocker_test1.docx",
+      "path": "artifacts/skeletons/techdocker_skeleton.json",
       "change_type": "deleted",
       "old_path": null
     },
     {
-      "path": "src/change_summary_generator.py",
-      "change_type": "added",
+      "path": "src/change_router.py",
+      "change_type": "deleted",
       "old_path": null
     },
     {
-      "path": "src/markdown_summary_parser.py",
-      "change_type": "added",
+      "path": "src/demo_docx_updater.py",
+      "change_type": "deleted",
       "old_path": null
     },
     {
-      "path": "src/project_summary_generator.py",
-      "change_type": "added",
+      "path": "src/document_skeleton_builder.py",
+      "change_type": "deleted",
       "old_path": null
     },
     {
-      "path": "src/repo_context_collector.py",
-      "change_type": "added",
+      "path": "src/skeleton_store.py",
+      "change_type": "deleted",
       "old_path": null
     },
     {
-      "path": "src/summary_change_router.py",
-      "change_type": "added",
+      "path": "tests/test2.txt",
+      "change_type": "deleted",
       "old_path": null
     },
     {
-      "path": "src/summary_skeleton_builder.py",
-      "change_type": "added",
+      "path": "tests/test_demo_docx_updater.py",
+      "change_type": "deleted",
       "old_path": null
     },
     {
-      "path": "src/summary_skeleton_store.py",
-      "change_type": "added",
-      "old_path": null
-    },
-    {
-      "path": "src/summary_updater.py",
-      "change_type": "added",
-      "old_path": null
-    },
-    {
-      "path": "tests/test_markdown_summary_parser.py",
-      "change_type": "added",
-      "old_path": null
-    },
-    {
-      "path": "tests/test_summary_pipeline.py",
-      "change_type": "added",
-      "old_path": null
-    },
-    {
-      "path": "tests/test_summary_updater.py",
-      "change_type": "added",
+      "path": "tests/test_skeleton_and_router.py",
+      "change_type": "deleted",
       "old_path": null
     }
   ],
-  "generated_summary": "18 file(s) changed (15 added, 1 deleted, 2 modified): modified .github/workflows/documentation-update.yml; modified README.md; added artifacts/change_packages/latest_change_summary.json; added artifacts/skeletons/base_skeleton.json; added artifacts/summaries/base_original_summary.md; added artifacts/summaries/base_updated_summary.md; deleted samples/~$chdocker_test1.docx; added src/change_summary_generator.py; added src/markdown_summary_parser.py; added src/project_summary_generator.py (and 8 more).",
-  "generated_at": "2026-07-14 05:46:56 UTC"
+  "generated_summary": "10 file(s) changed (8 deleted, 2 modified): modified .gitignore; modified README.md; deleted artifacts/skeletons/techdocker_skeleton.json; deleted src/change_router.py; deleted src/demo_docx_updater.py; deleted src/document_skeleton_builder.py; deleted src/skeleton_store.py; deleted tests/test2.txt; deleted tests/test_demo_docx_updater.py; deleted tests/test_skeleton_and_router.py.",
+  "generated_at": "2026-07-14 09:46:11 UTC"
 }
