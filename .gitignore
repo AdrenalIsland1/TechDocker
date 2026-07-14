@@ -12,3 +12,9 @@ __pycache__/
 # Local analysis outputs (the sample DOCX fixture in samples/ stays tracked)
 heading-analysis.csv
 *-analysis.csv
+
+# Word lock files
+~$*.docx
+
+# Manual scratch files
+tests/test2.txt

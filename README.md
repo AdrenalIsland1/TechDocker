@@ -114,40 +114,18 @@ same interface.
 
 ## Legacy DOCX Pipeline
 
-The DOCX parser, heading scorer, analyzer, and DOCX skeleton/updater modules
-remain in the repository as previous work and backup, but they are **no
-longer the active production path** after the security-driven direction
-change — the active workflow does not read or update DOCX files anymore.
-The standalone analyzer still works for inspection:
+The core DOCX parser remains in the repository as previous work and backup
+(`docx_parser.py`, `docx_feature_extractor.py`, `docx_heading_analyzer.py`,
+`docx_numbering.py`, `format_pattern_detector.py`, `heading_scorer.py`,
+`analyze_headings.py`, plus their tests and sample documents), but it is
+**no longer the active production path** after the security-driven direction
+change — the active workflow does not read or update DOCX files.
+
+The old DOCX automation demo (DOCX updater, DOCX skeleton builder/store, and
+DOCX change router) has been **removed from the code base entirely**; the
+GitHub Project Summary Pipeline above replaces it. The standalone analyzer
+still works for inspection:
 `python3 -m src.analyze_headings path/to/document.docx`.
-
-## Persistent Document Skeleton Architecture (legacy DOCX pipeline)
-
-The full feature-based DOCX parse is expensive, so it runs **once**:
-
-```bash
-python3 -m src.document_skeleton_builder
-```
-
-This parses the configured document and stores its heading structure as JSON
-at `artifacts/skeletons/techdocker_skeleton.json` — one entry per section with
-a stable slug id, level, parent, path, order, and content hash.
-
-On subsequent pushes the updater avoids full parsing entirely:
-
-1. `git diff` produces the changed files,
-2. a change summary is built from them,
-3. the stored skeleton JSON is loaded (and built first if missing),
-4. `src/change_router.py` decides whether the update belongs to an existing
-   section or needs a new heading (simple keyword rules today — an LLM will
-   replace this in a future phase),
-5. the DOCX is updated under the routed heading (found by scanning paragraph
-   text, not by re-parsing),
-6. the skeleton JSON is rewritten **only** when a new section was created —
-   structure changes are the only thing that invalidates it.
-
-If the routed heading cannot be found in the DOCX, the update is appended to
-the end with a warning.
 
 ## Project status
 
