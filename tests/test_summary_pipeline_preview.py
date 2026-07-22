@@ -139,7 +139,10 @@ def routing_response(section_id: str) -> str:
     )
 
 
-def patch_response(report: dict, index_sha: str) -> str:
+def patch_response(report: dict, index_sha: str = "") -> str:
+    # Minimal model-facing schema: the model returns only its decisions. Python
+    # derives section_id, target_type, old_text, and the source hash from the
+    # index, so ``index_sha`` is no longer part of the response.
     candidate = report["placement"]["candidates"][0]
     return json.dumps(
         {
@@ -148,15 +151,11 @@ def patch_response(report: dict, index_sha: str) -> str:
                 "replace_sentence" if candidate["candidate_type"] == "sentence"
                 else "replace_block"
             ),
-            "section_id": report["routing"]["selected_section_id"],
             "target_id": candidate["candidate_id"],
-            "target_type": candidate["candidate_type"],
-            "old_text": candidate["text"],
             "new_text": (
                 "Routing is performed by route_change, which scores the actual "
                 "sections of the summary instead of a fixed heading list."
             ),
-            "expected_source_sha256": index_sha,
             "confidence": 0.91,
             "reasoning": "route_change now scores actual sections.",
         }
@@ -762,8 +761,14 @@ def run_rich_preview(**kwargs):
     )
 
 
-def rich_patch_response(report: dict, index_sha: str) -> str:
-    """A small, well-grounded replacement of the change-package stale sentence."""
+def rich_patch_response(report: dict, index_sha: str = "") -> str:
+    """A small, well-grounded replacement of the change-package stale sentence.
+
+    Minimal model-facing schema only: the fake model does NOT echo old_text,
+    section_id, target_type, or the source hash — Python derives those, so the
+    exact stale paragraph (embedded newline + backticks) becomes canonical
+    old_text without the model reproducing it.
+    """
     candidate = report["placement"]["candidates"][0]
     operation = (
         "replace_sentence" if candidate["candidate_type"] == "sentence"
@@ -773,16 +778,12 @@ def rich_patch_response(report: dict, index_sha: str) -> str:
         {
             "schema_version": PATCH_SCHEMA_VERSION,
             "operation": operation,
-            "section_id": report["routing"]["selected_section_id"],
             "target_id": candidate["candidate_id"],
-            "target_type": candidate["candidate_type"],
-            "old_text": candidate["text"],
             "new_text": (
                 "In `change_summary_generator.py`, `create_change_package` now "
                 "records hunk line ranges, additions, deletions, and symbols in "
                 "`latest_change_summary.json`, not just changed file paths."
             ),
-            "expected_source_sha256": index_sha,
             "confidence": 0.92,
             "reasoning": (
                 "create_change_package now records hunk evidence in "
@@ -869,7 +870,14 @@ def test_rich_full_pipeline_plans_a_valid_patch_without_writing():
     assert plan["status"] == "planned"
     assert plan["plan"]["operation"] in {"replace_sentence", "replace_block"}
     assert plan["plan"]["section_id"] == expected_section
-    assert _normalize(plan["plan"]["old_text"]) == STALE_CHANGE_PACKAGE_SENTENCE
+    # Python derived the exact canonical old_text — including the embedded
+    # newline and backticks of the wrapped source paragraph — even though the
+    # fake model returned the minimal schema and never echoed old_text.
+    raw_old = plan["plan"]["old_text"]
+    assert "\n" in raw_old
+    assert "`change_summary_generator.py`" in raw_old
+    assert "`latest_change_summary.json`" in raw_old
+    assert _normalize(raw_old) == STALE_CHANGE_PACKAGE_SENTENCE
     assert "create_change_package" in plan["plan"]["new_text"]
     assert len(provider.prompts) == 2
 
@@ -887,3 +895,285 @@ def test_rich_fixture_run_leaves_fixtures_byte_identical():
     run_rich_preview(llm_stage=STAGE_NONE)
     for path, content in before.items():
         assert path.read_bytes() == content
+
+
+# ---------------------------------------------------------------------------
+# Rich fixture mirrors the production schema-v2 hunk serializer (Part B)
+# ---------------------------------------------------------------------------
+def _production_hunk_keys() -> set[str]:
+    """The exact keys the production hunk serializer emits."""
+    from src.git_change_detector import _hunk_to_dict
+    from src.git_diff_parser import DiffHunk
+
+    hunk = DiffHunk(
+        hunk_header="@@ -1,1 +1,1 @@", old_start_line=1, old_line_count=1,
+        old_end_line=1, new_start_line=1, new_line_count=1, new_end_line=1,
+        change_type="modified",
+    )
+    return set(_hunk_to_dict(hunk, "summary", []).keys())
+
+
+def _production_file_keys() -> set[str]:
+    """The exact keys the production per-file serializer emits."""
+    from src.git_change_detector import FileChange
+
+    return set(
+        FileChange(
+            path="x", old_path=None, status="modified", additions=1,
+            deletions=0, binary=False,
+        ).to_dict().keys()
+    )
+
+
+_RANGE_FIELDS = {
+    "old_start_line", "old_line_count", "old_end_line",
+    "new_start_line", "new_line_count", "new_end_line",
+}
+
+
+def _rich_hunks() -> list[dict]:
+    package = json.loads(RICH_CHANGE_PACKAGE.read_text(encoding="utf-8"))
+    return [
+        (entry, hunk)
+        for entry in package["changed_files"]
+        for hunk in entry["what_changed"]
+    ]
+
+
+# The stable schema-v2 hunk keys (this fixture is now the v2 backward-compat
+# fixture; production emits schema v3 with change_blocks instead).
+_V2_HUNK_KEYS = {
+    "old_start_line", "old_line_count", "old_end_line",
+    "new_start_line", "new_line_count", "new_end_line",
+    "hunk_header", "change_type", "summary", "symbols",
+    "added_lines", "removed_lines", "hunk_text_truncated",
+}
+
+
+def test_rich_v2_fixture_has_stable_v2_hunk_schema():
+    package = json.loads(RICH_CHANGE_PACKAGE.read_text(encoding="utf-8"))
+    prod_file_keys = _production_file_keys()
+
+    assert package["changed_files"], "fixture must have changed files"
+    for entry in package["changed_files"]:
+        # Every file entry carries the production serializer's stable keys.
+        assert prod_file_keys <= set(entry), sorted(prod_file_keys - set(entry))
+        assert entry["what_changed"], "each file must have at least one hunk"
+        for hunk in entry["what_changed"]:
+            # v2 hunks carry per-line arrays and explicit structured ranges.
+            assert _V2_HUNK_KEYS <= set(hunk), sorted(_V2_HUNK_KEYS - set(hunk))
+            assert _RANGE_FIELDS <= set(hunk)
+            assert "change_blocks" not in hunk  # v2 predates change_blocks
+
+
+def test_rich_fixture_ranges_are_mathematically_correct():
+    from src.git_diff_parser import end_line, parse_hunk_header
+
+    for _entry, hunk in _rich_hunks():
+        old_start, old_count, new_start, new_count, _ = parse_hunk_header(
+            hunk["hunk_header"]
+        )
+        # Structured ranges agree with the hunk header.
+        assert hunk["old_start_line"] == old_start
+        assert hunk["old_line_count"] == old_count
+        assert hunk["old_end_line"] == end_line(old_start, old_count)
+        assert hunk["new_start_line"] == new_start
+        assert hunk["new_line_count"] == new_count
+        assert hunk["new_end_line"] == end_line(new_start, new_count)
+        # Changed-line numbers fall within their side's range.
+        for line in hunk["added_lines"]:
+            assert hunk["new_start_line"] <= line["line_number"] <= hunk["new_end_line"]
+        for line in hunk["removed_lines"]:
+            assert hunk["old_start_line"] <= line["line_number"] <= hunk["old_end_line"]
+
+
+def test_rich_fixture_ranges_match_the_documented_values():
+    ranges = {
+        h["hunk_header"]: (
+            h["old_start_line"], h["old_end_line"],
+            h["new_start_line"], h["new_end_line"],
+        )
+        for _e, h in _rich_hunks()
+    }
+    assert ranges["@@ -52,11 +52,34 @@ def create_change_package"] == (52, 62, 52, 85)
+    assert ranges["@@ -120,18 +120,47 @@ def build_section_catalog"] == (120, 137, 120, 166)
+
+
+def test_rich_fixture_abbreviation_is_explicitly_truncated():
+    # The fixture is compact: it stores only representative changed lines, far
+    # fewer than the real additions/deletions. That omission must be explicit,
+    # never claimed as a full diff — the production hunk_text_truncated flag.
+    for entry, hunk in _rich_hunks():
+        stored = len(hunk["added_lines"]) + len(hunk["removed_lines"])
+        assert stored < entry["additions"] + entry["deletions"]
+        assert hunk["hunk_text_truncated"] is True
+
+
+def test_rich_fixture_change_types_are_consistent():
+    for entry, hunk in _rich_hunks():
+        # File- and hunk-level change types mirror the modified status, and the
+        # hunk change_type agrees with its two side counts.
+        assert entry["change_type"] == entry["status"] == "modified"
+        assert hunk["change_type"] == "modified"
+        assert hunk["old_line_count"] > 0 and hunk["new_line_count"] > 0
+
+
+def test_rich_preview_still_routes_and_places_after_schema_update():
+    # Part B must not regress Part-A behaviour: deterministic routing still
+    # selects Repository Automation and both stale paragraphs still surface.
+    report = run_rich_preview(llm_stage=STAGE_NONE)
+    assert report["routing"]["selected_heading"] == "Repository Automation"
+    assert report["routing"]["selected_section_id"] == rich_expected_section_id()
+    texts = [_normalize(c["text"]) for c in report["placement"]["candidates"]]
+    assert STALE_CHANGE_PACKAGE_SENTENCE in texts
+    assert STALE_FIXED_HEADING_SENTENCE in texts
+    # And the read-only run wrote nothing and left the fixtures byte-identical.
+    assert report["source_safety"]["writes_performed"] is False
+    assert report["source_safety"]["index_written"] is False
+
+
+# ---------------------------------------------------------------------------
+# schema-v3 fixture: equivalent to the v2 fixture, read-only, block-based
+# ---------------------------------------------------------------------------
+RICH_CHANGE_PACKAGE_V3 = FIXTURES / "rich_change_package_v3.json"
+
+
+def run_rich_preview_pkg(package_path, **kwargs):
+    return run_preview(
+        ".",
+        change_package_path=str(package_path),
+        summary_path=str(RICH_SUMMARY),
+        skeleton_path=str(RICH_SKELETON),
+        **kwargs,
+    )
+
+
+def _block_production_keys() -> set[str]:
+    from src.git_change_detector import _block_to_dict
+    from src.git_diff_parser import ChangeBlock
+
+    block = ChangeBlock(
+        block_index=1, change_type="modified",
+        old_start_line=1, old_line_count=1, old_end_line=1,
+        new_start_line=1, new_line_count=1, new_end_line=1,
+        removed_text="a", added_text="b",
+    )
+    return set(_block_to_dict(block).keys())
+
+
+def test_v3_fixture_is_schema_v3_with_blocks_and_no_line_arrays():
+    package = json.loads(RICH_CHANGE_PACKAGE_V3.read_text(encoding="utf-8"))
+    assert package["schema_version"] == 3
+    prod_block_keys = _block_production_keys()
+    for entry in package["changed_files"]:
+        for hunk in entry["what_changed"]:
+            assert "change_blocks" in hunk
+            assert "added_lines" not in hunk and "removed_lines" not in hunk
+            assert hunk["change_blocks"]
+            for block in hunk["change_blocks"]:
+                assert prod_block_keys <= set(block)
+
+
+def test_v3_fixture_block_ranges_are_consistent():
+    package = json.loads(RICH_CHANGE_PACKAGE_V3.read_text(encoding="utf-8"))
+    for entry in package["changed_files"]:
+        for hunk in entry["what_changed"]:
+            for block in hunk["change_blocks"]:
+                if block["old_line_count"]:
+                    assert block["old_end_line"] == (
+                        block["old_start_line"] + block["old_line_count"] - 1
+                    )
+                else:
+                    assert block["old_start_line"] is None
+                    assert block["removed_text"] == ""
+                if block["new_line_count"]:
+                    assert block["new_end_line"] == (
+                        block["new_start_line"] + block["new_line_count"] - 1
+                    )
+                else:
+                    assert block["new_start_line"] is None
+                    assert block["added_text"] == ""
+
+
+def test_v2_and_v3_fixtures_route_and_place_equivalently():
+    v2 = run_rich_preview_pkg(RICH_CHANGE_PACKAGE, llm_stage=STAGE_NONE)
+    v3 = run_rich_preview_pkg(RICH_CHANGE_PACKAGE_V3, llm_stage=STAGE_NONE)
+
+    # Selected section, ordering, and scores are identical.
+    assert v3["routing"]["selected_section_id"] == v2["routing"]["selected_section_id"]
+    assert v3["routing"]["selected_heading"] == "Repository Automation"
+    assert (
+        [c["section_id"] for c in v3["routing"]["candidates"]]
+        == [c["section_id"] for c in v2["routing"]["candidates"]]
+    )
+    assert (
+        [c["score"] for c in v3["routing"]["candidates"]]
+        == [c["score"] for c in v2["routing"]["candidates"]]
+    )
+
+    # Placement top candidate (the stale change-package paragraph), order, score.
+    assert (
+        v3["placement"]["candidates"][0]["candidate_id"]
+        == v2["placement"]["candidates"][0]["candidate_id"]
+    )
+    assert (
+        v3["placement"]["candidates"][0]["score"]
+        == v2["placement"]["candidates"][0]["score"]
+    )
+    assert (
+        _normalize(v3["placement"]["candidates"][0]["text"])
+        == STALE_CHANGE_PACKAGE_SENTENCE
+    )
+
+
+def test_v2_and_v3_fixtures_have_equivalent_grounding_facts():
+    from src.summary_index_builder import build_summary_index
+    from src.summary_patch_planner import build_change_facts, build_evidence_corpus
+    from src.summary_pipeline_preview import _routing_stage, load_inputs
+    from src.placement_candidate_scorer import score_placement_candidates
+
+    def facts_for(package_path):
+        inputs = load_inputs(
+            ".", change_package_path=str(package_path),
+            summary_path=str(RICH_SUMMARY), skeleton_path=str(RICH_SKELETON),
+        )
+        index = build_summary_index(
+            inputs.summary_markdown, inputs.skeleton, str(inputs.summary_path)
+        )
+        _, section_id = _routing_stage(inputs, None, None, [])
+        placement = score_placement_candidates(
+            inputs.change_package, index, section_id,
+            source_markdown=inputs.summary_markdown,
+        )
+        section = next(
+            s for s in index["sections"] if s["section_id"] == section_id
+        )
+        facts, omissions = build_change_facts(inputs.change_package, placement)
+        _corpus, tokens = build_evidence_corpus(
+            inputs.change_package, placement, section
+        )
+        return facts, omissions, tokens
+
+    v2_facts, v2_omissions, v2_tokens = facts_for(RICH_CHANGE_PACKAGE)
+    v3_facts, v3_omissions, v3_tokens = facts_for(RICH_CHANGE_PACKAGE_V3)
+    assert v3_facts == v2_facts
+    assert v3_omissions == v2_omissions
+    assert v3_tokens == v2_tokens
+    # The compact facts show block text, never per-line JSON.
+    joined = "\n".join(v3_facts)
+    assert "create_change_package" in joined
+    assert "line_number" not in joined
+
+
+def test_v3_preview_is_read_only_and_writes_no_index():
+    before = RICH_CHANGE_PACKAGE_V3.read_bytes()
+    report = run_rich_preview_pkg(RICH_CHANGE_PACKAGE_V3, llm_stage=STAGE_NONE)
+    safety = report["source_safety"]
+    assert safety["writes_performed"] is False
+    assert safety["index_written"] is False
+    assert (
+        safety["change_package_sha256_before"]
+        == safety["change_package_sha256_after"]
+    )
+    assert RICH_CHANGE_PACKAGE_V3.read_bytes() == before
+    assert not any(p.name.endswith("index.json") for p in FIXTURES.iterdir())

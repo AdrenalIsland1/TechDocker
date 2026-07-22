@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Mapping, Optional
 
 from src.automation_demo import extract_repository_name, is_missing_sha
+from src.canonical_document import resolve_canonical_baseline
 from src.change_summary_generator import create_change_package
 from src.git_change_detector import (
     ChangedFile,
@@ -227,23 +228,37 @@ def run_update(env: Mapping[str, str], repo_path: str = ".") -> SummaryUpdateRes
 
     actor = env.get("GITHUB_ACTOR", "").strip() or "local-user"
 
-    # 1-2. Baseline and reviewable copy. The baseline is generated at most
-    # once here and never modified by update runs.
-    original_path = original_summary_path(repo_path)
-    original_generated = not original_path.exists()
-    # No-op when the baseline exists; env selects the summary provider
-    # (deterministic unless TECHDOCKER_LLM_PROVIDER=ollama is set).
-    generate_original_summary(repo_path, env=env)
-
+    # 1-2. Baseline and reviewable copy. A normal push prefers the repository
+    # canonical technical document and NEVER regenerates an accepted baseline;
+    # only when no baseline exists at all does it fall back to the legacy
+    # deterministic generation path (env selects the provider). Baseline
+    # *creation* for the canonical document is the initializer's job, not this
+    # incremental updater's.
+    baseline = resolve_canonical_baseline(repo_path, env)
     updated_path = updated_summary_path(repo_path)
-    if not updated_path.exists():  # defensive; generator normally created it
-        shutil.copyfile(original_path, updated_path)
+    original_path = original_summary_path(repo_path)
+    if baseline.exists:
+        # Canonical or legacy baseline already present: use it as-is.
+        original_generated = False
+        baseline_document = baseline.path
+        if not updated_path.exists():  # initialize the reviewable copy once
+            shutil.copyfile(baseline.path, updated_path)
+    else:
+        original_generated = not original_path.exists()
+        # No-op when the legacy baseline exists; deterministic unless
+        # TECHDOCKER_LLM_PROVIDER=ollama is set.
+        generate_original_summary(repo_path, env=env)
+        baseline_document = original_path
+        if not updated_path.exists():  # defensive; generator normally created it
+            shutil.copyfile(original_path, updated_path)
 
-    # 3. Skeleton.
+    # 3. Skeleton, built from the exact baseline document actually used.
     skeleton_path = summary_skeleton_path(repo_path)
     skeleton_created = not skeleton_path.exists()
     if skeleton_created:
-        skeleton, skeleton_path = build_and_save_summary_skeleton(repo_path)
+        skeleton, skeleton_path = build_and_save_summary_skeleton(
+            repo_path, source=baseline.path if baseline.exists else None
+        )
     else:
         skeleton = load_summary_skeleton(skeleton_path)
 
@@ -409,7 +424,7 @@ def run_update(env: Mapping[str, str], repo_path: str = ".") -> SummaryUpdateRes
             )
 
     return SummaryUpdateResult(
-        original_summary=original_path,
+        original_summary=baseline_document,
         updated_summary=updated_path,
         skeleton_path=skeleton_path,
         change_package_path=change_package_file,

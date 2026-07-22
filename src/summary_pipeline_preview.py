@@ -171,7 +171,7 @@ def load_inputs(
         )
 
     schema_version = change_package.get("schema_version")
-    if schema_version is not None and schema_version not in (1, 2):
+    if schema_version is not None and schema_version not in (1, 2, 3):
         raise PreviewError(
             f"Unsupported change-package schema_version {schema_version!r}.",
             EXIT_STALE_DATA,

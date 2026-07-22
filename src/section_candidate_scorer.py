@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
+from src.change_package_reader import normalize_hunk
 from src.markdown_summary_parser import parse_markdown_sections
 from src.summary_index_builder import extract_keywords
 from src.summary_skeleton_store import SummarySkeleton
@@ -286,19 +287,21 @@ def extract_change_signals(
         for hunk in (entry.get("what_changed") or [])[:MAX_HUNKS_PER_FILE]:
             if not isinstance(hunk, dict):
                 continue
-            for symbol in hunk.get("symbols") or []:
+            # One normalization point handles v2 per-line arrays and v3 blocks.
+            normalized = normalize_hunk(hunk)
+            for symbol in normalized.symbols:
                 signals.symbols.add(str(symbol))
                 signals.symbol_tokens.update(extract_keywords(str(symbol)))
             if len(signals.hunk_tokens) >= MAX_HUNK_TOKEN_BUDGET:
                 continue
-            summary_text = hunk.get("summary") or ""
-            if summary_text:
-                signals.hunk_tokens.update(extract_keywords(summary_text))
-            for key in ("added_lines", "removed_lines"):
-                for line in (hunk.get(key) or [])[:MAX_LINES_PER_HUNK]:
-                    text = (line or {}).get("text", "") if isinstance(line, dict) else ""
-                    if text:
-                        signals.hunk_tokens.update(extract_keywords(text[:MAX_LINE_CHARS]))
+            if normalized.summary:
+                signals.hunk_tokens.update(extract_keywords(normalized.summary))
+            for text in (
+                normalized.added_lines[:MAX_LINES_PER_HUNK]
+                + normalized.removed_lines[:MAX_LINES_PER_HUNK]
+            ):
+                if text:
+                    signals.hunk_tokens.update(extract_keywords(text[:MAX_LINE_CHARS]))
 
     signals.summary_tokens.update(extract_keywords(change_summary or ""))
 

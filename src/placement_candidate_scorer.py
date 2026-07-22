@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
+from src.change_package_reader import normalize_hunk
 from src.section_candidate_scorer import (
     MAX_HUNK_TOKEN_BUDGET,
     MAX_HUNKS_PER_FILE,
@@ -198,27 +199,25 @@ def extract_placement_signals(
         for hunk in (entry.get("what_changed") or [])[:MAX_HUNKS_PER_FILE]:
             if not isinstance(hunk, dict):
                 continue
-            for symbol in hunk.get("symbols") or []:
+            # One normalization point handles v2 per-line arrays and v3 blocks.
+            normalized = normalize_hunk(hunk)
+            for symbol in normalized.symbols:
                 signals.symbols.add(str(symbol))
 
             if len(signals.hunk_tokens) >= MAX_HUNK_TOKEN_BUDGET:
                 continue
 
-            summary_text = hunk.get("summary") or ""
-            if summary_text:
-                signals.hunk_tokens.update(extract_keywords(summary_text))
-            header = hunk.get("hunk_header") or ""
-            if header:
-                signals.hunk_tokens.update(extract_keywords(header))
+            if normalized.summary:
+                signals.hunk_tokens.update(extract_keywords(normalized.summary))
+            if normalized.hunk_header:
+                signals.hunk_tokens.update(extract_keywords(normalized.hunk_header))
 
-            for line in (hunk.get("removed_lines") or [])[:MAX_LINES_PER_HUNK]:
-                text = line.get("text", "") if isinstance(line, dict) else ""
+            for text in normalized.removed_lines[:MAX_LINES_PER_HUNK]:
                 if text:
                     signals.removed_tokens.update(
                         extract_keywords(text[:MAX_LINE_CHARS])
                     )
-            for line in (hunk.get("added_lines") or [])[:MAX_LINES_PER_HUNK]:
-                text = line.get("text", "") if isinstance(line, dict) else ""
+            for text in normalized.added_lines[:MAX_LINES_PER_HUNK]:
                 if text:
                     signals.added_tokens.update(
                         extract_keywords(text[:MAX_LINE_CHARS])

@@ -41,14 +41,24 @@ def summary_skeleton_path(repo_path: str | Path = ".") -> Path:
 
 
 def default_summary_source(repo_path: str | Path = ".") -> Path:
-    """The skeleton is based on the original baseline summary.
+    """The document the skeleton is built from, most-preferred first.
 
-    Falls back to the updated copy only when the baseline does not exist.
+    Prefers the repository canonical ``{RepoName}_TechnicalDocument.md``, then
+    the legacy ``base_original_summary.md``. The reviewable
+    ``base_updated_summary.md`` is **never** a baseline source — it carries
+    generated update blocks, so building the permanent skeleton from it would
+    pollute the baseline. When neither baseline exists, the (non-existent)
+    canonical path is returned so building fails loudly rather than silently
+    using the reviewable copy.
     """
-    original = original_summary_path(repo_path)
-    if original.exists():
-        return original
-    return updated_summary_path(repo_path)
+    from src.canonical_document import resolve_canonical_baseline
+
+    # Resolve the canonical document from GITHUB_REPOSITORY / the directory name
+    # only — no git subprocess here. When a repository push actually has a
+    # canonical baseline, the updater resolves it with full context and passes
+    # the exact source in, so this deterministic path is sufficient.
+    resolved = resolve_canonical_baseline(repo_path, remote_reader=lambda _path: None)
+    return resolved.path
 
 
 def build_summary_skeleton(

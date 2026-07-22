@@ -50,6 +50,33 @@ class ChangedLine:
 
 
 @dataclass
+class ChangeBlock:
+    """A coherent run of consecutive changed lines within one hunk.
+
+    A block is a maximal run of ``+``/``-`` lines with no unchanged context
+    between them (schema v3's change unit). ``old_*``/``new_*`` describe the
+    complete real change even when the stored ``removed_text``/``added_text``
+    was truncated; ``text_truncated`` records that truncation. Pure additions
+    have ``old_line_count == 0`` and null old range (and ``removed_text == ""``);
+    pure deletions mirror that on the new side.
+    """
+
+    block_index: int
+    change_type: str  # "added" | "deleted" | "modified"
+    old_start_line: Optional[int]
+    old_line_count: int
+    old_end_line: Optional[int]
+    new_start_line: Optional[int]
+    new_line_count: int
+    new_end_line: Optional[int]
+    removed_text: str
+    added_text: str
+    summary: str = ""
+    symbols: list[str] = field(default_factory=list)
+    text_truncated: bool = False
+
+
+@dataclass
 class DiffHunk:
     """One parsed unified-diff hunk."""
 
@@ -64,6 +91,8 @@ class DiffHunk:
     section_heading: str = ""
     added_lines: list[ChangedLine] = field(default_factory=list)
     removed_lines: list[ChangedLine] = field(default_factory=list)
+    # Consecutive-changed-line blocks, built from the real diff body order.
+    blocks: list[ChangeBlock] = field(default_factory=list)
     # True counts of changed content lines (may exceed the stored arrays when
     # a very large hunk is truncated).
     added_count: int = 0
@@ -164,6 +193,7 @@ def parse_unified_diff(
         stored_chars = 0
         old_ln = old_start
         new_ln = new_start
+        builder = _BlockBuilder()
         index += 1
         while index < total:
             body = lines[index]
@@ -172,32 +202,121 @@ def parse_unified_diff(
             if body.startswith("@@") or body.startswith("diff --git "):
                 break
             if body.startswith("\\"):  # "\ No newline at end of file"
+                # Metadata: not changed content, does not advance the line
+                # counters, and never splits the active block.
                 index += 1
                 continue
 
             if body.startswith("+"):
                 hunk.added_count += 1
-                stored_chars = _store_changed_line(
+                stored_chars, stored_line, truncated = _store_changed_line(
                     hunk, hunk.added_lines, new_ln, body[1:], stored_chars,
                     max_lines_per_hunk, max_line_chars, max_hunk_text_chars,
                 )
+                builder.add_added(new_ln, stored_line, truncated)
                 new_ln += 1
             elif body.startswith("-"):
                 hunk.removed_count += 1
-                stored_chars = _store_changed_line(
+                stored_chars, stored_line, truncated = _store_changed_line(
                     hunk, hunk.removed_lines, old_ln, body[1:], stored_chars,
                     max_lines_per_hunk, max_line_chars, max_hunk_text_chars,
                 )
+                builder.add_removed(old_ln, stored_line, truncated)
                 old_ln += 1
             else:
-                # Context line (starts with a space, or a stray blank line).
+                # Context line (starts with a space, or a stray blank line)
+                # ends the active changed run.
+                _flush_block(hunk, builder)
+                builder = _BlockBuilder()
                 old_ln += 1
                 new_ln += 1
             index += 1
 
+        _flush_block(hunk, builder)
         hunks.append(hunk)
 
     return hunks
+
+
+class _BlockBuilder:
+    """Accumulates one changed run while walking a hunk body."""
+
+    __slots__ = (
+        "removed_numbers", "added_numbers", "removed_texts", "added_texts",
+        "truncated",
+    )
+
+    def __init__(self) -> None:
+        self.removed_numbers: list[int] = []
+        self.added_numbers: list[int] = []
+        self.removed_texts: list[str] = []
+        self.added_texts: list[str] = []
+        self.truncated = False
+
+    def is_empty(self) -> bool:
+        return not self.removed_numbers and not self.added_numbers
+
+    def add_added(self, line_number: int, stored: Optional[ChangedLine], truncated: bool) -> None:
+        self.added_numbers.append(line_number)
+        if stored is not None:
+            self.added_texts.append(stored.text)
+        if stored is None or truncated:
+            self.truncated = True
+
+    def add_removed(self, line_number: int, stored: Optional[ChangedLine], truncated: bool) -> None:
+        self.removed_numbers.append(line_number)
+        if stored is not None:
+            self.removed_texts.append(stored.text)
+        if stored is None or truncated:
+            self.truncated = True
+
+
+def _flush_block(hunk: DiffHunk, builder: _BlockBuilder) -> None:
+    """Finalize the active changed run into a :class:`ChangeBlock` (if any)."""
+    if builder.is_empty():
+        return
+    hunk.blocks.append(_finalize_block(builder, len(hunk.blocks) + 1))
+
+
+def _finalize_block(builder: _BlockBuilder, block_index: int) -> ChangeBlock:
+    old_count = len(builder.removed_numbers)
+    new_count = len(builder.added_numbers)
+    if old_count and new_count:
+        change_type = "modified"
+    elif new_count:
+        change_type = "added"
+    else:
+        change_type = "deleted"
+
+    old_start = builder.removed_numbers[0] if old_count else None
+    old_end = builder.removed_numbers[-1] if old_count else None
+    new_start = builder.added_numbers[0] if new_count else None
+    new_end = builder.added_numbers[-1] if new_count else None
+
+    # Stored text may lag the true counts when a per-side line cap, per-line
+    # char cap, or the per-hunk char budget truncated content.
+    text_truncated = (
+        builder.truncated
+        or len(builder.removed_texts) < old_count
+        or len(builder.added_texts) < new_count
+    )
+    return ChangeBlock(
+        block_index=block_index,
+        change_type=change_type,
+        old_start_line=old_start,
+        old_line_count=old_count,
+        old_end_line=old_end,
+        new_start_line=new_start,
+        new_line_count=new_count,
+        new_end_line=new_end,
+        removed_text="\n".join(builder.removed_texts),
+        added_text="\n".join(builder.added_texts),
+        summary=block_change_summary(
+            change_type, old_start, old_end, new_start, new_end
+        ),
+        symbols=[],
+        text_truncated=text_truncated,
+    )
 
 
 def _store_changed_line(
@@ -209,16 +328,18 @@ def _store_changed_line(
     max_lines_per_hunk: int,
     max_line_chars: int,
     max_hunk_text_chars: int,
-) -> int:
-    """Store one changed line under the stored-text caps; return new char total.
+) -> tuple[int, Optional[ChangedLine], bool]:
+    """Store one changed line under the caps.
 
-    Truncation is never silent: any cap that bites sets ``hunk_text_truncated``,
-    and a shortened line is flagged via ``ChangedLine.text_truncated``. The true
-    ``added_count``/``removed_count`` are updated by the caller regardless.
+    Returns ``(new_char_total, stored_line_or_None, was_truncated)``. A line is
+    dropped (``None``) when a per-side or per-hunk budget is exhausted, and
+    shortened when it exceeds the per-line cap; either way ``hunk_text_truncated``
+    is set so truncation is never silent. The true ``added_count``/
+    ``removed_count`` are updated by the caller regardless.
     """
     if len(target) >= max_lines_per_hunk:
         hunk.hunk_text_truncated = True
-        return stored_chars
+        return stored_chars, None, True
 
     stored_text = text
     text_truncated = False
@@ -230,10 +351,41 @@ def _store_changed_line(
     if stored_chars + len(stored_text) > max_hunk_text_chars:
         # Storing this line would exceed the per-hunk text budget; stop here.
         hunk.hunk_text_truncated = True
-        return stored_chars
+        return stored_chars, None, True
 
-    target.append(ChangedLine(line_number, stored_text, text_truncated))
-    return stored_chars + len(stored_text)
+    line = ChangedLine(line_number, stored_text, text_truncated)
+    target.append(line)
+    return stored_chars + len(stored_text), line, text_truncated
+
+
+def _range_phrase(start: int, end: int) -> str:
+    return str(start) if start == end else f"{start}–{end}"
+
+
+def block_change_summary(
+    change_type: str,
+    old_start: Optional[int],
+    old_end: Optional[int],
+    new_start: Optional[int],
+    new_end: Optional[int],
+) -> str:
+    """Deterministic, factual one-line summary of a change block.
+
+    e.g. ``"Added new lines 63–71."``, ``"Deleted old lines 40–45."``,
+    ``"Replaced old lines 55–56 with new lines 60–65."`` — never intent.
+    """
+    if change_type == "added":
+        word = "line" if new_start == new_end else "lines"
+        return f"Added new {word} {_range_phrase(new_start, new_end)}."
+    if change_type == "deleted":
+        word = "line" if old_start == old_end else "lines"
+        return f"Deleted old {word} {_range_phrase(old_start, old_end)}."
+    old_word = "line" if old_start == old_end else "lines"
+    new_word = "line" if new_start == new_end else "lines"
+    return (
+        f"Replaced old {old_word} {_range_phrase(old_start, old_end)} "
+        f"with new {new_word} {_range_phrase(new_start, new_end)}."
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,14 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # NOTE: the optional Copilot-CLI baseline route (below) is disabled by
+  # default and no model is selected, so it is NOT production-ready and no extra
+  # permission is required for normal runs. If, and only if, you later enable
+  # Copilot AND it authenticates through GITHUB_TOKEN, the official CLI may
+  # additionally require:
+  #   copilot-requests: write
+  # Add it then — not before — so the default (deterministic/no-LLM) path stays
+  # least-privilege.
 
 jobs:
   summary-automation:
@@ -49,15 +57,93 @@ jobs:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: python3 -m src.automation_demo
 
-      - name: Update project summary
+      # Read-only routing decision. NO model/provider is auto-selected: the plan
+      # only reports 'initialize_baseline' when initialization is explicitly
+      # enabled AND an explicit provider is named. It writes no documents.
+      - name: Resolve documentation push plan
+        id: plan
+        env:
+          TECHDOCKER_ENABLE_CANONICAL_INITIALIZATION: ${{ vars.TECHDOCKER_ENABLE_CANONICAL_INITIALIZATION }}
+          TECHDOCKER_BASE_SUMMARY_PROVIDER: ${{ vars.TECHDOCKER_BASE_SUMMARY_PROVIDER }}
+        run: python3 -m src.baseline_initializer --plan
+
+      # Invalid canonical document -> visible failure, never overwritten, no
+      # incremental update.
+      - name: Fail on invalid canonical document (manual review)
+        if: steps.plan.outputs.action == 'manual_review'
+        run: |
+          echo "::error::Canonical document ${{ steps.plan.outputs.canonical_filename }} exists but is invalid; manual review required. No update was run and nothing was overwritten."
+          exit 1
+
+      # Missing canonical, initialization not enabled, and no valid legacy
+      # baseline -> a clear, visible pending failure. Nothing is written.
+      - name: Fail on pending initialization (no baseline)
+        if: steps.plan.outputs.action == 'initialization_pending'
+        run: |
+          echo "::error::No valid canonical or legacy baseline exists and canonical initialization is deferred. Set TECHDOCKER_ENABLE_CANONICAL_INITIALIZATION=true and an explicit TECHDOCKER_BASE_SUMMARY_PROVIDER to initialize. No files were written."
+          exit 1
+
+      # Deferred-initialization notice: a missing canonical falls back to the
+      # legacy base_original_summary.md for the incremental update.
+      - name: Notice deferred canonical initialization
+        if: steps.plan.outputs.action == 'incremental_update_legacy'
+        run: |
+          echo "::notice::Canonical initialization is deferred; running the incremental update on the legacy base_original_summary.md."
+
+      # ---------------------------------------------------------------------
+      # OPTIONAL Copilot baseline provider. Installed ONLY when the plan is to
+      # initialize AND the explicitly-selected provider is copilot-cli AND this
+      # is not a fork. Copilot is never required, never auto-selected, and (no
+      # model chosen yet) not production-ready.
+      # ---------------------------------------------------------------------
+      - name: Set up Node.js (optional Copilot baseline)
+        if: >-
+          steps.plan.outputs.action == 'initialize_baseline' &&
+          vars.TECHDOCKER_BASE_SUMMARY_PROVIDER == 'copilot-cli' &&
+          github.event.repository.fork == false
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Copilot CLI (optional baseline provider)
+        if: >-
+          steps.plan.outputs.action == 'initialize_baseline' &&
+          vars.TECHDOCKER_BASE_SUMMARY_PROVIDER == 'copilot-cli' &&
+          github.event.repository.fork == false
+        run: npm install -g @github/copilot
+
+      # Missing canonical + initialization explicitly enabled/provider selected
+      # -> initializer (never the incremental updater). A non-deterministic
+      # provider failure does NOT silently fall back unless the fallback flag is
+      # explicitly set.
+      - name: Initialize baseline technical document
+        id: init
+        if: steps.plan.outputs.run_initializer == 'true'
+        env:
+          TECHDOCKER_ENABLE_CANONICAL_INITIALIZATION: ${{ vars.TECHDOCKER_ENABLE_CANONICAL_INITIALIZATION }}
+          TECHDOCKER_BASE_SUMMARY_PROVIDER: ${{ vars.TECHDOCKER_BASE_SUMMARY_PROVIDER }}
+          TECHDOCKER_COPILOT_MODEL: ${{ vars.TECHDOCKER_COPILOT_MODEL }}
+          TECHDOCKER_ALLOW_BASELINE_PROVIDER_FALLBACK: ${{ vars.TECHDOCKER_ALLOW_BASELINE_PROVIDER_FALLBACK }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -m src.baseline_initializer
+
+      # Existing valid canonical OR deferred-legacy -> incremental update. No
+      # provider is installed or called on this path.
+      - name: Update project summary (incremental)
+        id: update
+        if: steps.plan.outputs.run_updater == 'true'
         env:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: python3 -m src.summary_updater
 
-      - name: Detect summary artifact changes
+      - name: Detect artifact changes
         id: detect
+        if: >-
+          steps.plan.outputs.run_updater == 'true' ||
+          steps.init.outputs.baseline_initialized == 'true'
         run: |
           if git status --porcelain -- \
+            "${{ steps.plan.outputs.canonical_path }}" \
             artifacts/summaries/base_original_summary.md \
             artifacts/summaries/base_updated_summary.md \
             artifacts/skeletons/base_skeleton.json \
@@ -69,25 +155,61 @@ jobs:
             echo "No summary changes to propose"
           fi
 
-      - name: Propose summary update via Pull Request
+      # The PR type is derived from whether initialization ACTUALLY wrote a
+      # canonical baseline (steps.init.outputs.baseline_initialized), not merely
+      # from the canonical status — a missing document may take the deferred
+      # legacy incremental path instead.
+      - name: Propose changes via Pull Request
         if: steps.detect.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          BASELINE_INIT: ${{ steps.init.outputs.baseline_initialized == 'true' }}
+          REPO_NAME: ${{ steps.plan.outputs.repository_name }}
+          CANONICAL_FILENAME: ${{ steps.plan.outputs.canonical_filename }}
+          CANONICAL_PATH: ${{ steps.plan.outputs.canonical_path }}
         run: |
-          BRANCH="techdocker/summary-update-${{ github.run_id }}"
+          if [ "$BASELINE_INIT" = "true" ]; then
+            BRANCH="techdocker/baseline-init-${{ github.run_id }}"
+            TITLE="Initialize ${REPO_NAME} technical document (baseline)"
+          else
+            BRANCH="techdocker/summary-update-${{ github.run_id }}"
+            TITLE="Suggested project summary update (incremental)"
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          git add \
+
+          # Stage every artifact that may have changed, including the
+          # dynamically-named canonical document. It is staged only when it
+          # actually exists/changed (a legacy incremental run creates no
+          # canonical document; an incremental run has no change package issue).
+          for artifact in \
+            "$CANONICAL_PATH" \
             artifacts/summaries/base_original_summary.md \
             artifacts/summaries/base_updated_summary.md \
             artifacts/skeletons/base_skeleton.json \
-            artifacts/change_packages/latest_change_summary.json
-          git commit -m "Propose project summary update"
+            artifacts/change_packages/latest_change_summary.json; do
+            git add "$artifact" 2>/dev/null || true
+          done
+
+          git commit -m "$TITLE"
+
+          {
+            if [ "$BASELINE_INIT" = "true" ]; then
+              echo "## Baseline initialization"
+              echo
+              echo "Initializes the canonical technical document \`${CANONICAL_FILENAME}\` for **${REPO_NAME}**, plus the section skeleton and the reviewable copy built from it. No incremental change block was inserted."
+            else
+              echo "## Incremental summary update"
+              echo
+              python3 -m src.pr_summary_report
+            fi
+          } > pr_body.md
+
           git push origin "$BRANCH"
-          python3 -m src.pr_summary_report > pr_body.md
           gh pr create \
             --base main \
             --head "$BRANCH" \
-            --title "Suggested project summary update" \
+            --title "$TITLE" \
             --body-file pr_body.md

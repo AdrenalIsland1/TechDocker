@@ -290,7 +290,29 @@ def _changed_line_to_dict(line) -> dict:
     return entry
 
 
+def _block_to_dict(block) -> dict:
+    """Serialize one schema-v3 change block (compact multiline text, no per-line
+    JSON)."""
+    return {
+        "block_index": block.block_index,
+        "change_type": block.change_type,
+        "old_start_line": block.old_start_line,
+        "old_line_count": block.old_line_count,
+        "old_end_line": block.old_end_line,
+        "new_start_line": block.new_start_line,
+        "new_line_count": block.new_line_count,
+        "new_end_line": block.new_end_line,
+        "removed_text": block.removed_text,
+        "added_text": block.added_text,
+        "summary": block.summary,
+        "symbols": block.symbols,
+        "text_truncated": block.text_truncated,
+    }
+
+
 def _hunk_to_dict(hunk, summary: str, symbols: list[str]) -> dict:
+    # Schema v3: per-line ``added_lines``/``removed_lines`` are replaced by
+    # ``change_blocks`` with coherent multiline ``added_text``/``removed_text``.
     return {
         "old_start_line": hunk.old_start_line,
         "old_line_count": hunk.old_line_count,
@@ -302,10 +324,43 @@ def _hunk_to_dict(hunk, summary: str, symbols: list[str]) -> dict:
         "change_type": hunk.change_type,
         "summary": summary,
         "symbols": symbols,
-        "added_lines": [_changed_line_to_dict(line) for line in hunk.added_lines],
-        "removed_lines": [_changed_line_to_dict(line) for line in hunk.removed_lines],
         "hunk_text_truncated": hunk.hunk_text_truncated,
+        "change_blocks": [_block_to_dict(block) for block in hunk.blocks],
     }
+
+
+def _dedup_symbol_names(*symbol_groups) -> list[str]:
+    """Deterministic, order-preserving dedup of PySymbol groups by name."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for group in symbol_groups:
+        for symbol in group:
+            if symbol.qualified_name not in seen:
+                seen.add(symbol.qualified_name)
+                names.append(symbol.qualified_name)
+    return names
+
+
+def _attach_block_symbols(hunk, post_symbols, pre_symbols) -> None:
+    """Best-effort AST symbols per block: new-side for additions, old-side for
+    deletions, deduped new+old for modifications (``[]`` for non-Python)."""
+    for block in hunk.blocks:
+        added_nums = (
+            list(range(block.new_start_line, block.new_end_line + 1))
+            if block.new_line_count else []
+        )
+        removed_nums = (
+            list(range(block.old_start_line, block.old_end_line + 1))
+            if block.old_line_count else []
+        )
+        new_symbols = enclosing_symbol_objects(post_symbols, added_nums)
+        old_symbols = enclosing_symbol_objects(pre_symbols, removed_nums)
+        if block.change_type == "added":
+            block.symbols = _dedup_symbol_names(new_symbols)
+        elif block.change_type == "deleted":
+            block.symbols = _dedup_symbol_names(old_symbols)
+        else:
+            block.symbols = _dedup_symbol_names(new_symbols, old_symbols)
 
 
 def _build_what_changed(
@@ -372,6 +427,8 @@ def _build_what_changed(
             primary = new_symbols[0] if new_symbols else (
                 old_symbols[0] if old_symbols else None
             )
+
+        _attach_block_symbols(hunk, post_symbols, pre_symbols)
 
         summary = build_hunk_summary(hunk, primary, header_symbol(hunk.section_heading))
         what_changed.append(_hunk_to_dict(hunk, summary, symbol_names))

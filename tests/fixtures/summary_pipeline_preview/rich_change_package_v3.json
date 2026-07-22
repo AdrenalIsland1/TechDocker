@@ -1,0 +1,126 @@
+{
+  "schema_version": 3,
+  "repository": "techdocker/techdocker",
+  "branch": "main",
+  "actor": "fixture",
+  "before_sha": "0000000000000000000000000000000000000000",
+  "after_sha": "1111111111111111111111111111111111111111",
+  "changed_files": [
+    {
+      "path": "src/change_summary_generator.py",
+      "old_path": null,
+      "change_type": "modified",
+      "status": "modified",
+      "additions": 34,
+      "deletions": 11,
+      "binary": false,
+      "binary_note": null,
+      "what_changed": [
+        {
+          "old_start_line": 52,
+          "old_line_count": 11,
+          "old_end_line": 62,
+          "new_start_line": 52,
+          "new_line_count": 34,
+          "new_end_line": 85,
+          "hunk_header": "@@ -52,11 +52,34 @@ def create_change_package",
+          "change_type": "modified",
+          "summary": "Modified function create_change_package with 34 added and 11 removed lines.",
+          "symbols": ["create_change_package"],
+          "hunk_text_truncated": true,
+          "change_blocks": [
+            {
+              "block_index": 1,
+              "change_type": "modified",
+              "old_start_line": 55,
+              "old_line_count": 1,
+              "old_end_line": 55,
+              "new_start_line": 60,
+              "new_line_count": 1,
+              "new_end_line": 60,
+              "removed_text": "record only changed file paths in latest_change_summary.json",
+              "added_text": "entry[\"what_changed\"] = build_hunk_evidence(diff, symbols)",
+              "summary": "Replaced old line 55 with new line 60.",
+              "symbols": ["create_change_package"],
+              "text_truncated": false
+            },
+            {
+              "block_index": 2,
+              "change_type": "added",
+              "old_start_line": null,
+              "old_line_count": 0,
+              "old_end_line": null,
+              "new_start_line": 71,
+              "new_line_count": 1,
+              "new_end_line": 71,
+              "removed_text": "",
+              "added_text": "record hunk line ranges, additions, deletions, and symbols",
+              "summary": "Added new line 71.",
+              "symbols": ["create_change_package"],
+              "text_truncated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/section_candidate_scorer.py",
+      "old_path": null,
+      "change_type": "modified",
+      "status": "modified",
+      "additions": 47,
+      "deletions": 18,
+      "binary": false,
+      "binary_note": null,
+      "what_changed": [
+        {
+          "old_start_line": 120,
+          "old_line_count": 18,
+          "old_end_line": 137,
+          "new_start_line": 120,
+          "new_line_count": 47,
+          "new_end_line": 166,
+          "hunk_header": "@@ -120,18 +120,47 @@ def build_section_catalog",
+          "change_type": "modified",
+          "summary": "Modified function build_section_catalog with 47 added and 18 removed lines.",
+          "symbols": ["build_section_catalog", "score_section"],
+          "hunk_text_truncated": true,
+          "change_blocks": [
+            {
+              "block_index": 1,
+              "change_type": "modified",
+              "old_start_line": 124,
+              "old_line_count": 1,
+              "old_end_line": 124,
+              "new_start_line": 131,
+              "new_line_count": 1,
+              "new_end_line": 131,
+              "removed_text": "route using a fixed list of expected heading names",
+              "added_text": "catalog = build_section_catalog(skeleton, contents)",
+              "summary": "Replaced old line 124 with new line 131.",
+              "symbols": ["build_section_catalog"],
+              "text_truncated": false
+            },
+            {
+              "block_index": 2,
+              "change_type": "added",
+              "old_start_line": null,
+              "old_line_count": 0,
+              "old_end_line": null,
+              "new_start_line": 148,
+              "new_line_count": 1,
+              "new_end_line": 148,
+              "removed_text": "",
+              "added_text": "score_section ranks the actual skeleton sections",
+              "summary": "Added new line 148.",
+              "symbols": ["score_section"],
+              "text_truncated": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "generated_summary": "2 file(s) changed (2 modified): modified src/change_summary_generator.py; modified src/section_candidate_scorer.py.",
+  "generated_at": "2026-01-01 00:00:00 UTC"
+}

@@ -16,6 +16,7 @@ from src.placement_candidate_scorer import (
     APPEND_TO_SECTION as PLACEMENT_APPEND,
     MANUAL_REVIEW_NEEDED as PLACEMENT_MANUAL,
     PlacementAssessment,
+    PlacementCandidate,
     score_placement_candidates,
 )
 from src.summary_index_builder import build_summary_index
@@ -135,19 +136,21 @@ class ExplodingProvider:
 
 
 def response(**overrides) -> str:
+    """The MINIMAL model-facing schema: only fields the model actually decides.
+
+    Immutable fields (section_id, target_type, old_text, source hash, list
+    marker, offsets) are Python-owned and deliberately absent — supplying any
+    of them makes the response invalid (an unknown key).
+    """
     candidate = candidate_of(ASSESSMENT, "sentence") or ASSESSMENT.top
     payload = {
         "schema_version": PATCH_SCHEMA_VERSION,
         "operation": REPLACE_SENTENCE,
-        "section_id": ASSESSMENT.section_id,
         "target_id": candidate.candidate_id,
-        "target_type": candidate.candidate_type,
-        "old_text": candidate.text,
         "new_text": (
             "Routing is performed by route_change, which scores the actual "
             "sections of the summary instead of a fixed heading list."
         ),
-        "expected_source_sha256": SOURCE_SHA,
         "confidence": 0.91,
         "reasoning": "route_change now scores actual sections.",
     }
@@ -172,12 +175,22 @@ def plan(text: str, assessment: PlacementAssessment = ASSESSMENT, **kwargs):
 # valid operations
 # ---------------------------------------------------------------------------
 def test_valid_replace_sentence():
+    # A valid response carrying NO immutable fields (no old_text, section_id,
+    # target_type, or source hash) still produces a fully-populated plan.
     result, _ = plan(response())
     assert result.status == STATUS_PLANNED
     assert result.instruction.operation == REPLACE_SENTENCE
-    assert result.instruction.target_type == "sentence"
-    assert result.instruction.expected_source_sha256 == SOURCE_SHA
     assert result.is_mutation
+    instruction = result.instruction
+    candidate = candidate_of(ASSESSMENT, "sentence")
+    # Every immutable field is derived by Python from the index, not the model.
+    assert instruction.section_id == ASSESSMENT.section_id
+    assert instruction.target_type == candidate.candidate_type == "sentence"
+    assert instruction.old_text == candidate.text  # exact canonical index text
+    assert instruction.expected_source_sha256 == SOURCE_SHA
+    # The model did supply target_id and new_text.
+    assert instruction.target_id == candidate.candidate_id
+    assert "route_change" in instruction.new_text
 
 
 def test_valid_insert_after_sentence():
@@ -201,16 +214,13 @@ def test_valid_replace_block_and_insert_after_block():
         (INSERT_AFTER_BLOCK, "- route_change ranks the actual sections of the summary."),
     ):
         result, _ = plan(
-            response(
-                operation=operation,
-                target_id=block.candidate_id,
-                target_type="block",
-                old_text=block.text,
-                new_text=new_text,
-            )
+            response(operation=operation, target_id=block.candidate_id, new_text=new_text)
         )
         assert result.status == STATUS_PLANNED, result.reason
         assert result.instruction.operation == operation
+        # Block granularity and exact old text are derived, not supplied.
+        assert result.instruction.target_type == "block"
+        assert result.instruction.old_text == block.text
 
 
 def test_valid_append_to_section():
@@ -218,13 +228,14 @@ def test_valid_append_to_section():
         response(
             operation=APPEND_TO_SECTION,
             target_id=None,
-            target_type="section",
-            old_text="",
             new_text="Routing now records the matched signals for route_change.",
         )
     )
     assert result.status == STATUS_PLANNED
+    # Python derives the null/empty target fields for a targetless append.
     assert result.instruction.target_id is None
+    assert result.instruction.target_type is None
+    assert result.instruction.old_text == ""
 
 
 def test_valid_manual_review_needed():
@@ -232,14 +243,14 @@ def test_valid_manual_review_needed():
         response(
             operation=MANUAL_REVIEW_NEEDED,
             target_id=None,
-            target_type=None,
-            old_text="",
             new_text="",
             confidence=0.4,
             reasoning="Evidence is insufficient to place this change.",
         )
     )
     assert result.instruction.operation == MANUAL_REVIEW_NEEDED
+    assert result.instruction.target_type is None
+    assert result.instruction.old_text == ""
     assert not result.is_mutation
 
 
@@ -250,8 +261,6 @@ def test_high_confidence_supported_no_change_needed():
         response(
             operation=NO_CHANGE_NEEDED,
             target_id=None,
-            target_type=None,
-            old_text="",
             new_text="",
             confidence=0.95,
             reasoning=f"The existing text about {distinctive} already describes this.",
@@ -265,7 +274,7 @@ def test_low_confidence_no_change_is_downgraded():
     result, _ = plan(
         response(
             operation=NO_CHANGE_NEEDED,
-            target_id=None, target_type=None, old_text="", new_text="",
+            target_id=None, new_text="",
             confidence=0.80,  # above the mutation bar, below the no-change bar
             reasoning="The routing description already covers this.",
         )
@@ -280,7 +289,7 @@ def test_unsupported_no_change_reasoning_is_downgraded():
     result, _ = plan(
         response(
             operation=NO_CHANGE_NEEDED,
-            target_id=None, target_type=None, old_text="", new_text="",
+            target_id=None, new_text="",
             confidence=0.97,
             reasoning="Nothing to do at all.",  # cites no candidate wording
         )
@@ -307,27 +316,40 @@ def test_real_index_target_outside_candidates_is_rejected():
         for block in section["blocks"]
         if block["block_id"] not in shortlisted
     )
-    result, _ = plan(response(target_id=other, target_type="block"))
+    result, _ = plan(response(target_id=other))
     assert result.status == STATUS_MANUAL_REVIEW
+    assert "not one of the supplied candidates" in result.reason
 
 
-def test_wrong_section_id_is_rejected():
-    result, _ = plan(response(section_id="some-other-section"))
-    assert "does not match the selected section" in result.reason
-
-
-def test_wrong_target_type_is_rejected():
-    result, _ = plan(response(target_type="block"))
-    assert "does not match the indexed" in result.reason
+def test_target_from_another_section_is_rejected():
+    # A candidate that IS in the shortlist but claims a different section is
+    # rejected by the section-belonging guard (defends a corrupted assessment).
+    good = candidate_of(ASSESSMENT, "sentence")
+    foreign = PlacementCandidate(
+        candidate_id=good.candidate_id,
+        candidate_type="sentence",
+        section_id="a-different-section",
+        block_id=good.block_id,
+        sentence_id=good.sentence_id,
+        block_type=good.block_type,
+        text=good.text,
+        score=good.score,
+    )
+    tampered = PlacementAssessment(
+        section_id=ASSESSMENT.section_id,
+        candidates=[foreign],
+        recommendation="use_existing_candidate",
+        reasoning="tampered",
+    )
+    result, _ = plan(response(target_id=good.candidate_id), assessment=tampered)
+    assert result.status == STATUS_MANUAL_REVIEW
+    assert "does not belong to the selected section" in result.reason
 
 
 def test_sentence_operation_targeting_block_is_rejected():
     block = candidate_of(ASSESSMENT, "block")
     result, _ = plan(
-        response(
-            operation=REPLACE_SENTENCE, target_id=block.candidate_id,
-            target_type="block", old_text=block.text,
-        )
+        response(operation=REPLACE_SENTENCE, target_id=block.candidate_id)
     )
     assert "cannot target a block" in result.reason
 
@@ -335,22 +357,49 @@ def test_sentence_operation_targeting_block_is_rejected():
 def test_block_operation_targeting_sentence_is_rejected():
     sentence = candidate_of(ASSESSMENT, "sentence")
     result, _ = plan(
-        response(
-            operation=REPLACE_BLOCK, target_id=sentence.candidate_id,
-            target_type="sentence", old_text=sentence.text,
-        )
+        response(operation=REPLACE_BLOCK, target_id=sentence.candidate_id)
     )
     assert "cannot target a sentence" in result.reason
 
 
-def test_old_text_mismatch_is_rejected():
-    result, _ = plan(response(old_text="Text that does not match the index."))
-    assert "does not exactly match" in result.reason
+# ---------------------------------------------------------------------------
+# the model owns NONE of the immutable fields; supplying any is rejected
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "forbidden,value",
+    [
+        ("section_id", "some-other-section"),
+        ("target_type", "block"),
+        ("old_text", "Text that does not match the index."),
+        ("expected_source_sha256", "0" * 64),
+        ("list_marker", "- "),
+        ("source_start_offset", 0),
+        ("source_end_offset", 999),
+        ("start_line", 1),
+        ("end_line", 9),
+    ],
+)
+def test_model_cannot_override_immutable_field(forbidden, value):
+    # None of these are model-supplied any more, so each is an unknown key and
+    # the response is rejected — the model cannot redirect the patch through a
+    # section, type, exact text, hash, marker, or offset it does not own.
+    result, _ = plan(response(**{forbidden: value}))
+    assert result.status == STATUS_MANUAL_REVIEW
+    assert "Unexpected response key" in result.reason
 
 
-def test_source_hash_mismatch_is_rejected():
-    result, _ = plan(response(expected_source_sha256="0" * 64))
-    assert "source hash" in result.reason
+def test_immutable_fields_are_derived_not_from_the_model():
+    # The model targets a candidate; Python fills in everything immutable.
+    candidate = candidate_of(ASSESSMENT, "sentence")
+    result, _ = plan(response(target_id=candidate.candidate_id))
+    instruction = result.instruction
+    assert result.status == STATUS_PLANNED
+    assert instruction.section_id == ASSESSMENT.section_id == SECTION["section_id"]
+    assert instruction.target_type == candidate.candidate_type
+    # The canonical old_text is exactly the indexed candidate text, byte for
+    # byte — the model never sent it.
+    assert instruction.old_text == candidate.text
+    assert instruction.expected_source_sha256 == SOURCE_SHA
 
 
 # ---------------------------------------------------------------------------
@@ -523,17 +572,16 @@ def test_list_item_replacement_must_preserve_marker():
     ok, _ = plan(
         response(
             operation=REPLACE_BLOCK, target_id=block.candidate_id,
-            target_type="block", old_text=block.text,
             new_text="- Section routing lives in src/summary_change_router.py and scores sections.",
         )
     )
     assert ok.status == STATUS_PLANNED
+    # The list marker is derived from the indexed block, not supplied.
     assert ok.instruction.list_marker == "- "
 
     bad, _ = plan(
         response(
             operation=REPLACE_BLOCK, target_id=block.candidate_id,
-            target_type="block", old_text=block.text,
             new_text="Section routing lives in src/summary_change_router.py now.",
         )
     )
@@ -780,15 +828,13 @@ def v1_assessment_and_index():
 
 def plan_v1(new_text, reasoning="Legacy change_router.py was removed.", confidence=0.9):
     assessment, index = v1_assessment_and_index()
+    # Minimal model-facing schema: append carries new_text only; Python owns
+    # section_id, the empty old_text, and the source hash.
     payload = {
         "schema_version": PATCH_SCHEMA_VERSION,
         "operation": APPEND_TO_SECTION,
-        "section_id": assessment.section_id,
         "target_id": None,
-        "target_type": "section",
-        "old_text": "",
         "new_text": new_text,
-        "expected_source_sha256": index["source"]["sha256"],
         "confidence": confidence,
         "reasoning": reasoning,
     }
@@ -877,12 +923,8 @@ def test_added_file_described_as_removed_is_rejected():
     payload = {
         "schema_version": PATCH_SCHEMA_VERSION,
         "operation": APPEND_TO_SECTION,
-        "section_id": assessment.section_id,
         "target_id": None,
-        "target_type": "section",
-        "old_text": "",
         "new_text": "The new_engine.py module was removed from the pipeline.",
-        "expected_source_sha256": index["source"]["sha256"],
         "confidence": 0.9,
         "reasoning": "new_engine.py changed.",
     }
@@ -912,12 +954,8 @@ def test_renamed_old_path_presented_as_current_is_rejected():
             {
                 "schema_version": PATCH_SCHEMA_VERSION,
                 "operation": APPEND_TO_SECTION,
-                "section_id": assessment.section_id,
                 "target_id": None,
-                "target_type": "section",
-                "old_text": "",
                 "new_text": text,
-                "expected_source_sha256": index["source"]["sha256"],
                 "confidence": 0.9,
                 "reasoning": "old_router.py path changed.",
             }

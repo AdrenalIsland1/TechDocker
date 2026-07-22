@@ -55,8 +55,14 @@ def test_modified_text_file_metadata_and_hunks(repo):
     hunk = change.what_changed[0]
     assert hunk["change_type"] == "modified"
     assert "f" in hunk["symbols"]
-    assert any(line["text"] == "    return 2" for line in hunk["added_lines"])
-    assert any(line["text"] == "    return 1" for line in hunk["removed_lines"])
+    # Schema v3: coherent change_blocks with multiline text, no per-line arrays.
+    assert "added_lines" not in hunk and "removed_lines" not in hunk
+    assert hunk["change_blocks"]
+    added = "\n".join(b["added_text"] for b in hunk["change_blocks"]).split("\n")
+    removed = "\n".join(b["removed_text"] for b in hunk["change_blocks"]).split("\n")
+    assert "    return 2" in added
+    assert "    return 1" in removed
+    assert "f" in hunk["change_blocks"][0]["symbols"]
 
 
 def test_added_text_file(repo):
@@ -115,9 +121,9 @@ def test_rename_with_modification(repo):
     assert change.old_path == "orig.py"
     assert change.what_changed  # has hunks
     assert any(
-        line["text"] == "ADDED"
+        "ADDED" in block["added_text"].split("\n")
         for hunk in change.what_changed
-        for line in hunk["added_lines"]
+        for block in hunk["change_blocks"]
     )
 
 
@@ -234,7 +240,10 @@ def test_plus_prefixed_source_line_round_trips_through_git(repo):
 
     change = by_path(collect_file_changes(before, after, repo))["code.txt"]
     added_texts = [
-        line["text"] for hunk in change.what_changed for line in hunk["added_lines"]
+        text
+        for hunk in change.what_changed
+        for block in hunk["change_blocks"]
+        for text in (block["added_text"].split("\n") if block["added_text"] else [])
     ]
     assert "++value" in added_texts
 
@@ -249,12 +258,15 @@ def test_long_line_truncation_surfaces_in_json(repo):
     entry = change.to_dict()
     hunk = entry["what_changed"][0]
     assert hunk["hunk_text_truncated"] is True
-    line = hunk["added_lines"][0]
-    assert line["text_truncated"] is True
-    assert len(line["text"]) == 2000  # DEFAULT_MAX_LINE_CHARS
+    block = hunk["change_blocks"][0]
+    # The single long added line is truncated inside the block's added_text, and
+    # the block records it. True counts/ranges remain correct.
+    assert block["text_truncated"] is True
+    assert len(block["added_text"]) == 2000  # DEFAULT_MAX_LINE_CHARS
+    assert block["new_line_count"] == 1
 
 
-def test_ordinary_lines_omit_text_truncated_key(repo):
+def test_ordinary_blocks_are_not_truncated(repo):
     (repo / "svc.py").write_text("def f():\n    return 1\n")
     before = commit_all(repo, "base")
     (repo / "svc.py").write_text("def f():\n    return 2\n")
@@ -262,8 +274,9 @@ def test_ordinary_lines_omit_text_truncated_key(repo):
 
     change = by_path(collect_file_changes(before, after, repo))["svc.py"]
     for hunk in change.to_dict()["what_changed"]:
-        for line in [*hunk["added_lines"], *hunk["removed_lines"]]:
-            assert "text_truncated" not in line  # stable {line_number, text}
+        assert "added_lines" not in hunk and "removed_lines" not in hunk
+        for block in hunk["change_blocks"]:
+            assert block["text_truncated"] is False  # boolean always present
 
 
 def test_package_without_details_keeps_v1_shape(tmp_path):

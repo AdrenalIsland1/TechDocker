@@ -21,10 +21,13 @@ from src.git_change_detector import ChangedFile
 CHANGE_PACKAGE_DIRECTORY = Path("artifacts") / "change_packages"
 CHANGE_PACKAGE_NAME = "latest_change_summary.json"
 
-# Bumped from the implicit v1 (file names only) to v2, which enriches each
-# changed-file entry with additions/deletions, binary status, and hunk-level
-# ``what_changed`` details. Readers should tolerate a missing/older version.
-SCHEMA_VERSION = 2
+# Schema history: implicit v1 (file names only) -> v2 (per-file additions/
+# deletions, binary status, hunk ``what_changed`` with per-line added_lines/
+# removed_lines) -> v3, which replaces the verbose per-line arrays with coherent
+# ``change_blocks`` (multiline added_text/removed_text, true ranges, per-block
+# symbols and truncation). Readers tolerate v1/v2/v3 via
+# :mod:`src.change_package_reader`.
+SCHEMA_VERSION = 3
 
 
 def change_package_path(repo_path: str | Path = ".") -> Path:

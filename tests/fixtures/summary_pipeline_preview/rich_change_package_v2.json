@@ -9,14 +9,23 @@
     {
       "path": "src/change_summary_generator.py",
       "old_path": null,
+      "change_type": "modified",
       "status": "modified",
       "additions": 34,
       "deletions": 11,
       "binary": false,
+      "binary_note": null,
       "what_changed": [
         {
+          "old_start_line": 52,
+          "old_line_count": 11,
+          "old_end_line": 62,
+          "new_start_line": 52,
+          "new_line_count": 34,
+          "new_end_line": 85,
           "hunk_header": "@@ -52,11 +52,34 @@ def create_change_package",
-          "summary": "Expanded create_change_package so the change package records hunk line ranges, additions, deletions, and symbols instead of only file paths.",
+          "change_type": "modified",
+          "summary": "Modified function create_change_package with 34 added and 11 removed lines.",
           "symbols": ["create_change_package"],
           "added_lines": [
             {"line_number": 63, "text": "entry[\"what_changed\"] = build_hunk_evidence(diff, symbols)"},
@@ -24,21 +33,31 @@
           ],
           "removed_lines": [
             {"line_number": 55, "text": "record only changed file paths in latest_change_summary.json"}
-          ]
+          ],
+          "hunk_text_truncated": true
         }
       ]
     },
     {
       "path": "src/section_candidate_scorer.py",
       "old_path": null,
+      "change_type": "modified",
       "status": "modified",
       "additions": 47,
       "deletions": 18,
       "binary": false,
+      "binary_note": null,
       "what_changed": [
         {
+          "old_start_line": 120,
+          "old_line_count": 18,
+          "old_end_line": 137,
+          "new_start_line": 120,
+          "new_line_count": 47,
+          "new_end_line": 166,
           "hunk_header": "@@ -120,18 +120,47 @@ def build_section_catalog",
-          "summary": "Replaced the fixed expected-heading list with build_section_catalog and score_section, which score the actual skeleton sections.",
+          "change_type": "modified",
+          "summary": "Modified function build_section_catalog with 47 added and 18 removed lines.",
           "symbols": ["build_section_catalog", "score_section"],
           "added_lines": [
             {"line_number": 131, "text": "catalog = build_section_catalog(skeleton, contents)"},
@@ -46,7 +65,8 @@
           ],
           "removed_lines": [
             {"line_number": 124, "text": "route using a fixed list of expected heading names"}
-          ]
+          ],
+          "hunk_text_truncated": true
         }
       ]
     }
