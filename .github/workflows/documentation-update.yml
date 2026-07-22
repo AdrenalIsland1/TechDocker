@@ -4,15 +4,17 @@ on:
   push:
     branches:
       - main
-    # Loop guard 1: pushes that only touch generated artifacts (i.e. the
-    # commit this workflow itself makes) do not retrigger it.
+    # Loop guard 1: pushes that only touch generated artifacts (e.g. the
+    # merge commit of an accepted summary PR) do not retrigger the workflow.
     paths-ignore:
       - artifacts/**
   workflow_dispatch:
 
-# Needed so the workflow can push the updated summary artifacts back.
+# The workflow pushes a proposal branch and opens a PR — it never commits
+# directly to main.
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   summary-automation:
@@ -52,18 +54,40 @@ jobs:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: python3 -m src.summary_updater
 
-      - name: Commit updated summary artifacts
+      - name: Detect summary artifact changes
+        id: detect
         run: |
+          if git status --porcelain -- \
+            artifacts/summaries/base_original_summary.md \
+            artifacts/summaries/base_updated_summary.md \
+            artifacts/skeletons/base_skeleton.json \
+            artifacts/change_packages/latest_change_summary.json \
+            | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No summary changes to propose"
+          fi
+
+      - name: Propose summary update via Pull Request
+        if: steps.detect.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="techdocker/summary-update-${{ github.run_id }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
           git add \
             artifacts/summaries/base_original_summary.md \
             artifacts/summaries/base_updated_summary.md \
             artifacts/skeletons/base_skeleton.json \
             artifacts/change_packages/latest_change_summary.json
-          if git diff --cached --quiet; then
-            echo "No summary artifact changes to commit."
-          else
-            git commit -m "Update project summary from automation [skip ci]"
-            git push
-          fi
+          git commit -m "Propose project summary update"
+          git push origin "$BRANCH"
+          python3 -m src.pr_summary_report > pr_body.md
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "Suggested project summary update" \
+            --body-file pr_body.md

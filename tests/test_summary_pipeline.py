@@ -232,16 +232,19 @@ def test_router_rules(path, expected_heading):
     assert decision.skeleton_should_change is False
 
 
-def test_router_creates_section_when_none_exists():
+def test_router_never_invents_a_section_for_a_non_empty_skeleton():
+    # A testing change with no testing-like section must NOT invent one:
+    # internal categories are routing bridges, not headings.
     small = make_skeleton(["System Overview"])
     decision = route_change(
         "summary",
         [ChangedFile(path="tests/test_x.py", change_type="added")],
         small,
     )
-    assert decision.decision == CREATE_NEW
-    assert decision.new_heading == "Testing Strategy"
-    assert decision.skeleton_should_change is True
+    assert decision.decision == UPDATE_EXISTING
+    assert decision.skeleton_should_change is False
+    assert decision.new_heading is None
+    assert decision.ambiguous is True  # flagged for review instead
 
 
 def test_router_empty_skeleton_creates_fallback():

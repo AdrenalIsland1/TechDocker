@@ -1,27 +1,31 @@
 # TechDocker
 
-TechDocker analyzes DOCX technical documents, extracts paragraph formatting and list metadata, and scores likely headings to build a reliable document structure.
+TechDocker is a GitHub project-summary automation pipeline: it detects Git code changes, produces structured change packages, routes each change to the relevant section of a reviewable Markdown project summary, and opens a pull request for developer approval — with LLM assistance kept optional behind a deterministic default.
 
 ## Purpose
 
-Many real-world Word documents do not use official Heading styles. TechDocker
-reads a `.docx` file (read-only — the source document is never modified),
-extracts every paragraph's visible formatting, and produces:
+TechDocker keeps a technical project summary in sync with the code without
+anyone editing documentation by hand, and without any change reaching `main`
+unreviewed. On every push it:
 
-- a transparent 0–100 heading score per paragraph, with the exact signals
-  that added or subtracted points,
-- a classification: `heading`, `probable_heading`, or `normal_content`,
-- Word list metadata (bullet/numbered, nesting level, reconstructed markers
-  such as `1.` or `•`) resolved from the document's numbering XML,
-- manual line-break segments within single paragraphs,
-- a structured heading hierarchy, a compact terminal table, and a full CSV
-  report for inspection.
+- detects the changed files between the before/after commits (`git diff`),
+- packages them into a structured change summary
+  (`artifacts/change_packages/latest_change_summary.json`),
+- routes the change to the right section of the summary using a stored
+  skeleton of its headings,
+- inserts a clearly marked update block into the reviewable summary
+  (`artifacts/summaries/base_updated_summary.md`),
+- opens a pull request so a developer can approve, edit, or reject the
+  suggestion.
 
-Official Word Heading styles always win (score 100). For everything else, an
-explainable formatting heuristic scores signals such as bold, relative font
-size, numbering prefixes, colon endings, spacing, and repeated formatting
-patterns, with hard rules for `Note:`/`Link:` prefixes and strong signal
-combinations.
+The permanent baseline (`artifacts/summaries/base_original_summary.md`) is
+never modified by update runs. LLM support (local Ollama today, vLLM on
+company servers later) is strictly optional: CI and the default pipeline are
+fully deterministic.
+
+The repository also contains a DOCX parser and heading scorer from the
+project's earlier direction — these are **legacy/backup capabilities**, not
+the active product (see "Legacy DOCX Pipeline" below).
 
 ## Installation
 
@@ -46,26 +50,30 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Run the DOCX analyzer
+### Preview or generate the project summary
+
+```bash
+python3 -m src.project_summary_generator --preview   # print, write nothing
+python3 -m src.project_summary_generator             # write baseline once
+python3 -m src.project_summary_generator --force     # regenerate baseline
+```
+
+### Run the summary updater locally
+
+```bash
+python3 -m src.summary_updater
+```
+
+### Run the legacy DOCX analyzer (inactive backup tooling)
 
 ```bash
 python3 -m src.analyze_headings path/to/document.docx
-```
-
-This prints a compact table with each paragraph's text, style, score,
-classification, predicted heading level, detection method, and scoring
-signals.
-
-### Export the full analysis to CSV
-
-```bash
 python3 -m src.analyze_headings path/to/document.docx --output analysis.csv
 ```
 
-The CSV contains every extracted feature per paragraph: formatting (font
-size/family/color, bold, italic, underline, spacing, alignment), text shape
-(word/sentence counts, `is_title_case`, `is_all_caps`), list metadata,
-line-break segments, and the scoring outcome.
+The legacy analyzer prints per-paragraph heading scores and can export every
+extracted formatting feature to CSV; see
+[docs/heading-detection-scoring.md](docs/heading-detection-scoring.md).
 
 ### Run the tests
 
@@ -104,13 +112,97 @@ runs the tests, then `python3 -m src.summary_updater`, which:
    LLM-ready interface),
 4. inserts a marked `<!-- TECHDOCKER_UPDATE_START/END -->` block into
    `base_updated_summary.md` under the routed section,
-5. rebuilds the skeleton only when a new section had to be created,
-6. commits the four artifacts back as `github-actions[bot]` with `[skip ci]`.
+5. extends the skeleton only when a new section had to be created,
+6. **proposes** the result as a Pull Request — nothing is committed
+   directly to `main`.
+
+### Review flow
+
+```text
+push to main
+  → workflow generates the summary suggestion
+  → bot pushes a branch (techdocker/summary-update-<run id>)
+  → bot opens a PR: "Suggested project summary update"
+  → developer reviews: merge as-is, edit base_updated_summary.md
+    in the PR branch, or close the PR to reject
+  → no summary change reaches main without review
+```
+
+When the updater produces no artifact changes the workflow prints
+"No summary changes to propose" and exits successfully. The PR body
+(`python3 -m src.pr_summary_report`) lists the source commit, actor, branch,
+and changed files, and reminds reviewers that `base_original_summary.md`
+remains the unchanged baseline. GitHub PRs are the current
+confirm/edit/reject mechanism; email/Teams notifications are future work.
 
 Summary generation sits behind a provider interface: the current
 `LocalDeterministicSummaryProvider` needs no network or tokens (safe for
 tests and demos); Copilot/LLM generation is a future provider behind the
 same interface.
+
+## Optional Local LLM Provider
+
+The default pipeline is fully deterministic — CI and the GitHub Actions
+workflow need no LLM, no Ollama, and no tokens. For local development an
+optional [Ollama](https://ollama.com) provider can generate richer change
+summaries and suggest routing decisions. Recommended first model:
+`qwen2.5-coder:3b`.
+
+```bash
+ollama run qwen2.5-coder:3b
+
+# read-only preview of the placement suggestion for the latest change:
+TECHDOCKER_LLM_PROVIDER=ollama TECHDOCKER_OLLAMA_MODEL=qwen2.5-coder:3b \
+  python3 -m src.llm_change_analyzer
+
+# full updater run with LLM-assisted routing:
+TECHDOCKER_LLM_PROVIDER=ollama TECHDOCKER_OLLAMA_MODEL=qwen2.5-coder:3b \
+  python3 -m src.summary_updater
+```
+
+Safety properties:
+
+- If Ollama is unavailable, the pipeline falls back to deterministic mode
+  (set `TECHDOCKER_LLM_STRICT=true` to fail loudly instead).
+- LLM output is validated and **never directly trusted**: it must be strict
+  JSON, the decision must be one of the two allowed values, confidence must
+  be within [0, 1], and the target section must exist in the skeleton —
+  anything else falls back to the rule-based router. The LLM never edits
+  files.
+- Suggestions below `TECHDOCKER_LLM_MIN_CONFIDENCE` (default 0.75) are
+  discarded in favour of the rule-based router.
+- Production plan: vLLM on company servers later, behind the same provider
+  interface.
+
+## LLM Quality Layer
+
+The deterministic provider remains the default so CI is always safe — the
+GitHub Actions workflow needs no model, no tokens, no network. Locally,
+Ollama can produce a much better baseline summary and per-push change
+summaries; the current local test model is `qwen2.5-coder:7b`.
+
+```bash
+# preview the LLM baseline without writing anything:
+TECHDOCKER_LLM_PROVIDER=ollama TECHDOCKER_OLLAMA_MODEL=qwen2.5-coder:7b \
+  python3 -m src.project_summary_generator --preview
+
+# regenerate the baseline with the LLM (only --force overwrites it):
+TECHDOCKER_LLM_PROVIDER=ollama TECHDOCKER_OLLAMA_MODEL=qwen2.5-coder:7b \
+  python3 -m src.project_summary_generator --force
+
+# preview the routing suggestion for the latest change:
+TECHDOCKER_LLM_PROVIDER=ollama TECHDOCKER_OLLAMA_MODEL=qwen2.5-coder:7b \
+  python3 -m src.llm_change_analyzer
+```
+
+Every LLM output is validated before use: the baseline must carry the eight
+stable headings (otherwise the deterministic summary is used), and routing
+suggestions are rejected when they propose generic headings ("Code Changes",
+"Updates", …), generic or empty summaries, unknown section ids, or
+out-of-range confidence — rejection always falls back to the rule-based
+router. The PR review flow remains the final approval layer regardless of
+which provider produced the suggestion. Production plan: vLLM on company
+servers behind the same provider interface.
 
 ## Legacy DOCX Pipeline
 

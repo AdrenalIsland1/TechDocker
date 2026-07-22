@@ -21,6 +21,11 @@ from src.git_change_detector import ChangedFile
 CHANGE_PACKAGE_DIRECTORY = Path("artifacts") / "change_packages"
 CHANGE_PACKAGE_NAME = "latest_change_summary.json"
 
+# Bumped from the implicit v1 (file names only) to v2, which enriches each
+# changed-file entry with additions/deletions, binary status, and hunk-level
+# ``what_changed`` details. Readers should tolerate a missing/older version.
+SCHEMA_VERSION = 2
+
 
 def change_package_path(repo_path: str | Path = ".") -> Path:
     return Path(repo_path) / CHANGE_PACKAGE_DIRECTORY / CHANGE_PACKAGE_NAME
@@ -52,15 +57,29 @@ def create_change_package(
     after_sha: str,
     changed_files: list[ChangedFile],
     repo_path: str | Path = ".",
+    file_details: Optional[list[dict]] = None,
 ) -> tuple[dict, Path]:
-    """Build the change package and write it as JSON; returns (package, path)."""
+    """Build the change package and write it as JSON; returns (package, path).
+
+    When ``file_details`` is provided (the enriched schema-v2 entries produced
+    by :func:`src.git_change_detector.collect_file_changes`), those are used
+    for ``changed_files``. Otherwise the entries fall back to the basic
+    ``ChangedFile`` shape (``path``/``change_type``/``old_path``), keeping
+    backward compatibility with callers and tests that pass no details.
+    """
+    if file_details is not None:
+        changed_entries: list[dict] = file_details
+    else:
+        changed_entries = [asdict(changed) for changed in changed_files]
+
     package = {
+        "schema_version": SCHEMA_VERSION,
         "repository": repository,
         "branch": branch,
         "actor": actor,
         "before_sha": before_sha,
         "after_sha": after_sha,
-        "changed_files": [asdict(changed) for changed in changed_files],
+        "changed_files": changed_entries,
         "generated_summary": generate_change_summary(changed_files),
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     }

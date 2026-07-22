@@ -1,0 +1,52 @@
+{
+  "project_id": "techdocker",
+  "source_summary_path": "tests/fixtures/summary_pipeline_preview/rich_summary.md",
+  "generated_at": "2026-01-01 00:00:00 UTC",
+  "sections": [
+    {
+      "section_id": "techdocker-technical-summary",
+      "heading": "TechDocker Technical Summary",
+      "level": 1,
+      "parent_id": null,
+      "path": "TechDocker Technical Summary",
+      "order": 1,
+      "content_hash": null
+    },
+    {
+      "section_id": "techdocker-technical-summary-product-purpose",
+      "heading": "Product Purpose",
+      "level": 2,
+      "parent_id": "techdocker-technical-summary",
+      "path": "TechDocker Technical Summary > Product Purpose",
+      "order": 2,
+      "content_hash": "e85b9735979cdeb21fe5e5afc2427f6f292a31a8479eebe3b75738b0ec7b2e3d"
+    },
+    {
+      "section_id": "techdocker-technical-summary-repository-automation",
+      "heading": "Repository Automation",
+      "level": 2,
+      "parent_id": "techdocker-technical-summary",
+      "path": "TechDocker Technical Summary > Repository Automation",
+      "order": 3,
+      "content_hash": "8e87ab9de52d805ec677e3ee811b9a95c6902fdb63ee8087f2fd1d1ae4f19f53"
+    },
+    {
+      "section_id": "techdocker-technical-summary-quality-and-tests",
+      "heading": "Quality and Tests",
+      "level": 2,
+      "parent_id": "techdocker-technical-summary",
+      "path": "TechDocker Technical Summary > Quality and Tests",
+      "order": 4,
+      "content_hash": "19ba541d2a678a0b8834d1bac33cace3a96bd8c4190e58d005437590c6092ba1"
+    },
+    {
+      "section_id": "techdocker-technical-summary-ci-cd-review-flow",
+      "heading": "CI/CD Review Flow",
+      "level": 2,
+      "parent_id": "techdocker-technical-summary",
+      "path": "TechDocker Technical Summary > CI/CD Review Flow",
+      "order": 5,
+      "content_hash": "9f4aa960adb2953c4fb1a59a03de96a3b874e4bba2ab1ba125da89bfe94f5945"
+    }
+  ]
+}

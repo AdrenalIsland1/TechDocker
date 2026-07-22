@@ -35,7 +35,21 @@ from typing import Mapping, Optional
 
 from src.automation_demo import extract_repository_name, is_missing_sha
 from src.change_summary_generator import create_change_package
-from src.git_change_detector import ChangedFile, build_change_set
+from src.git_change_detector import (
+    ChangedFile,
+    build_change_set,
+    collect_file_changes,
+)
+from src.llm_change_analyzer import (
+    NO_SUITABLE_SECTION,
+    select_section_with_llm,
+    selection_to_routing_decision,
+)
+from src.llm_provider import get_llm_provider_from_env
+from src.section_candidate_scorer import (
+    extract_change_signals,
+    select_files_for_llm,
+)
 from src.markdown_summary_parser import normalize_heading
 from src.project_summary_generator import (
     generate_original_summary,
@@ -44,7 +58,10 @@ from src.project_summary_generator import (
 )
 from src.summary_change_router import (
     CREATE_NEW,
+    UPDATE_EXISTING,
     SummaryRoutingDecision,
+    build_routing_context,
+    decide_from_assessment,
     route_change,
 )
 from src.summary_skeleton_builder import (
@@ -60,6 +77,9 @@ from src.summary_skeleton_store import (
 UPDATE_BLOCK_START = "<!-- TECHDOCKER_UPDATE_START -->"
 UPDATE_BLOCK_END = "<!-- TECHDOCKER_UPDATE_END -->"
 
+DEFAULT_LLM_MIN_CONFIDENCE = 0.75
+LLM_MIN_CONFIDENCE_ENV_VAR = "TECHDOCKER_LLM_MIN_CONFIDENCE"
+
 
 @dataclass
 class SummaryUpdateResult:
@@ -74,6 +94,8 @@ class SummaryUpdateResult:
     changed_files: list[ChangedFile] = field(default_factory=list)
     decision: Optional[SummaryRoutingDecision] = None
     placement: str = ""
+    routing_source: str = "rule_based"  # or "llm"
+    llm_confidence: Optional[float] = None
     original_generated: bool = False
     skeleton_created: bool = False
     skeleton_updated: bool = False
@@ -209,7 +231,9 @@ def run_update(env: Mapping[str, str], repo_path: str = ".") -> SummaryUpdateRes
     # once here and never modified by update runs.
     original_path = original_summary_path(repo_path)
     original_generated = not original_path.exists()
-    generate_original_summary(repo_path)  # no-op when the baseline exists
+    # No-op when the baseline exists; env selects the summary provider
+    # (deterministic unless TECHDOCKER_LLM_PROVIDER=ollama is set).
+    generate_original_summary(repo_path, env=env)
 
     updated_path = updated_summary_path(repo_path)
     if not updated_path.exists():  # defensive; generator normally created it
@@ -248,7 +272,23 @@ def run_update(env: Mapping[str, str], repo_path: str = ".") -> SummaryUpdateRes
                 "continuing with an empty changed-file list."
             )
 
-    # 5. Change package.
+    # 5. Change package. Enrich with file-level and hunk-level details when a
+    # real diff is available; degrade to file names only on any git failure.
+    file_details: Optional[list[dict]] = None
+    if changed_files and before_sha:
+        try:
+            file_details = [
+                detail.to_dict()
+                for detail in collect_file_changes(
+                    before_sha, after_sha, repo_path
+                )
+            ]
+        except (subprocess.CalledProcessError, OSError) as error:
+            warnings.append(
+                f"could not extract file-level diff details ({error}); the "
+                "change package lists file names only."
+            )
+
     change_package, change_package_file = create_change_package(
         repository=repository,
         branch=branch,
@@ -257,12 +297,75 @@ def run_update(env: Mapping[str, str], repo_path: str = ".") -> SummaryUpdateRes
         after_sha=after_sha,
         changed_files=changed_files,
         repo_path=repo_path,
+        file_details=file_details,
     )
 
-    # 6. Route.
-    decision = route_change(
-        change_package["generated_summary"], changed_files, skeleton
+    # 6. Route: rule-based by default; the LLM path is strictly opt-in via
+    # TECHDOCKER_LLM_PROVIDER=ollama and only *suggests* — every suggestion is
+    # validated, threshold-gated, and falls back to the rule-based router.
+    summary_text = change_package["generated_summary"]
+    routing_source = "rule_based"
+    llm_confidence: Optional[float] = None
+
+    # Deterministic scoring over the *actual* skeleton sections runs exactly
+    # once; the optional LLM may only pick from the shortlist it produces.
+    assessment, catalog = build_routing_context(
+        summary_text,
+        changed_files,
+        skeleton,
+        file_details=file_details,
+        summary_text=updated_path.read_text(encoding="utf-8"),
     )
+    decision = decide_from_assessment(assessment, catalog)
+
+    if env.get("TECHDOCKER_LLM_PROVIDER", "").strip().lower() == "ollama":
+        try:
+            threshold = float(
+                env.get(LLM_MIN_CONFIDENCE_ENV_VAR, "") or DEFAULT_LLM_MIN_CONFIDENCE
+            )
+        except ValueError:
+            threshold = DEFAULT_LLM_MIN_CONFIDENCE
+
+        candidates = assessment.candidates
+        signals = extract_change_signals(summary_text, changed_files, file_details)
+        prompt_paths, omitted = select_files_for_llm(signals, candidates)
+
+        selection = select_section_with_llm(
+            summary_text,
+            candidates,
+            provider=get_llm_provider_from_env(env),
+            changed_paths=prompt_paths,
+            changed_symbols=sorted(signals.symbols),
+            additional_files_omitted=omitted,
+        )
+        if selection is None:
+            warnings.append(
+                "LLM selection was unavailable or invalid; using the "
+                "deterministic routing result."
+            )
+        elif selection.decision == NO_SUITABLE_SECTION:
+            warnings.append(
+                f"LLM reported no suitable section ({selection.reasoning}); "
+                "using the deterministic routing result."
+            )
+        elif selection.confidence < threshold:
+            warnings.append(
+                f"LLM confidence {selection.confidence:.2f} is below the "
+                f"threshold {threshold:.2f}; using the deterministic routing "
+                "result."
+            )
+        else:
+            llm_decision = selection_to_routing_decision(selection, candidates)
+            if llm_decision is not None:
+                decision = llm_decision
+                routing_source = "llm"
+                llm_confidence = selection.confidence
+
+    if decision.ambiguous and decision.decision == UPDATE_EXISTING:
+        warnings.append(
+            f"Section routing was ambiguous ({decision.reasoning}); the "
+            "target section needs review."
+        )
 
     # 7-8. Apply to the updated summary only.
     block = build_update_block(
@@ -272,7 +375,7 @@ def run_update(env: Mapping[str, str], repo_path: str = ".") -> SummaryUpdateRes
         before_sha=before_sha,
         after_sha=after_sha,
         changed_files=changed_files,
-        summary_text=change_package["generated_summary"],
+        summary_text=summary_text,
     )
 
     text = updated_path.read_text(encoding="utf-8")
@@ -315,6 +418,8 @@ def run_update(env: Mapping[str, str], repo_path: str = ".") -> SummaryUpdateRes
         changed_files=changed_files,
         decision=decision,
         placement=placement,
+        routing_source=routing_source,
+        llm_confidence=llm_confidence,
         original_generated=original_generated,
         skeleton_created=skeleton_created,
         skeleton_updated=skeleton_updated,
@@ -338,6 +443,12 @@ def format_result(result: SummaryUpdateResult) -> str:
         f"Repository/branch: {result.repository} / {result.branch}",
         f"Changed files:     {len(result.changed_files)}",
         f"Routing decision:  {result.decision.decision if result.decision else '(none)'}",
+        f"Routing source:    {result.routing_source}"
+        + (
+            f" (confidence {result.llm_confidence:.2f})"
+            if result.llm_confidence is not None
+            else ""
+        ),
         f"Placement:         {result.placement}",
     ]
     if result.decision is not None:

@@ -122,10 +122,11 @@ def test_existing_section_update_does_not_touch_skeleton(tmp_path, monkeypatch):
 
 def test_new_section_update_extends_skeleton(tmp_path, monkeypatch):
     repo = make_repo(tmp_path)
-    # Custom summaries whose structure lacks "Testing Strategy".
+    # A summary with no headings at all leaves the skeleton with no eligible
+    # sections — the only case where creating a section is defensible.
     original = original_summary_path(repo)
     original.parent.mkdir(parents=True, exist_ok=True)
-    content = "# Project Technical Summary\n\n## System Overview\n\nOverview.\n"
+    content = "Prose without any headings at all.\n"
     original.write_text(content, encoding="utf-8")
     updated_summary_path(repo).write_text(content, encoding="utf-8")
     build_and_save_summary_skeleton(repo)
@@ -137,15 +138,15 @@ def test_new_section_update_extends_skeleton(tmp_path, monkeypatch):
     result = run_update(CI_ENV, repo_path=str(repo))
 
     assert result.decision.decision == CREATE_NEW
-    assert result.decision.new_heading == "Testing Strategy"
+    assert result.decision.new_heading == "System Overview"
     assert result.decision.skeleton_should_change is True
     assert result.skeleton_updated is True
 
     text = updated_summary_path(repo).read_text(encoding="utf-8")
-    assert "## Testing Strategy" in text
+    assert "## System Overview" in text
     # Skeleton was extended with the new section...
     data = json.loads(summary_skeleton_path(repo).read_text(encoding="utf-8"))
-    assert "Testing Strategy" in [s["heading"] for s in data["sections"]]
+    assert "System Overview" in [s["heading"] for s in data["sections"]]
     # ...but remains based on the ORIGINAL baseline summary.
     assert "base_original_summary.md" in data["source_summary_path"]
     # The transient update-block heading did not become a section.
@@ -173,6 +174,76 @@ def test_change_package_is_written_with_push_metadata(tmp_path, monkeypatch):
     assert package["after_sha"] == "def456"
     assert package["changed_files"][0]["path"] == "src/core.py"
     assert "generated_summary" in package
+
+
+def test_valid_llm_resolution_clears_the_ambiguity_warning(tmp_path, monkeypatch):
+    """A validated above-threshold LLM pick resolves a deterministic tie.
+
+    The ambiguity warning must reflect the *final* route: once the LLM has
+    resolved an ambiguous deterministic decision, the updater must not keep
+    warning that routing was ambiguous.
+    """
+    from src.llm_change_analyzer import SELECT_EXISTING, LLMSectionSelection
+    from src.summary_change_router import decide_from_assessment as real_decide
+
+    repo = make_repo(tmp_path)
+    mock_detector(
+        monkeypatch,
+        [ChangedFile(path="tests/test_core.py", change_type="modified")],
+    )
+
+    # Force the deterministic decision to look like a genuine tie.
+    def ambiguous_decide(assessment, catalog):
+        decision = real_decide(assessment, catalog)
+        decision.ambiguous = True
+        return decision
+
+    monkeypatch.setattr(summary_updater, "decide_from_assessment", ambiguous_decide)
+
+    # The LLM validly selects a real shortlisted section, above threshold.
+    def fake_select(summary_text, candidates, **kwargs):
+        top = candidates[0]
+        return LLMSectionSelection(
+            SELECT_EXISTING, top.section_id, top.heading, 0.95, "Belongs here."
+        )
+
+    monkeypatch.setattr(summary_updater, "select_section_with_llm", fake_select)
+    monkeypatch.setattr(
+        summary_updater, "get_llm_provider_from_env", lambda env=None: object()
+    )
+
+    result = run_update(
+        dict(CI_ENV, TECHDOCKER_LLM_PROVIDER="ollama"), repo_path=str(repo)
+    )
+
+    assert result.routing_source == "llm"
+    assert result.decision.ambiguous is False  # the tie is resolved
+    assert not any("ambiguous" in warning.lower() for warning in result.warnings)
+
+
+def test_unresolved_tie_still_warns_about_ambiguity(tmp_path, monkeypatch):
+    """Without a valid LLM resolution, an ambiguous tie must still warn."""
+    from src.summary_change_router import decide_from_assessment as real_decide
+
+    repo = make_repo(tmp_path)
+    mock_detector(
+        monkeypatch,
+        [ChangedFile(path="tests/test_core.py", change_type="modified")],
+    )
+
+    def ambiguous_decide(assessment, catalog):
+        decision = real_decide(assessment, catalog)
+        decision.ambiguous = True
+        return decision
+
+    monkeypatch.setattr(summary_updater, "decide_from_assessment", ambiguous_decide)
+
+    # No LLM configured: the deterministic (ambiguous) decision stands.
+    result = run_update(CI_ENV, repo_path=str(repo))
+
+    assert result.routing_source == "rule_based"
+    assert result.decision.ambiguous is True
+    assert any("ambiguous" in warning.lower() for warning in result.warnings)
 
 
 def test_missing_before_sha_still_updates_safely(tmp_path, monkeypatch):

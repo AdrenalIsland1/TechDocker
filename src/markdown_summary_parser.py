@@ -17,6 +17,14 @@ from typing import Optional
 _ATX_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _TRAILING_COLON_RE = re.compile(r"\s*:\s*[-–—]?\s*$")
 
+# Headings that convey nothing; shared by summary validation and change
+# routing (defined here because this module has no project dependencies).
+GENERIC_HEADINGS = {
+    "code changes", "code change", "changes", "change", "updates", "update",
+    "code updates", "miscellaneous", "misc", "general", "general updates",
+    "other", "improvements", "fixes", "modifications", "new section",
+}
+
 
 @dataclass
 class MarkdownSection:
