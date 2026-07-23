@@ -105,6 +105,79 @@ def test_default_summary_source_falls_back_to_legacy_original(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# hermeticity: default_summary_source ignores ambient GITHUB_REPOSITORY
+# (regression for the GitHub Actions test-isolation bug)
+# ---------------------------------------------------------------------------
+def test_default_summary_source_is_hermetic_to_ambient_github_repository(
+    tmp_path, monkeypatch
+):
+    # Simulate the CI environment that exposed the bug.
+    monkeypatch.setenv("GITHUB_REPOSITORY", "AdrenalIsland1/TechDocker")
+
+    # The canonical doc named for the *supplied* repo directory must be found,
+    # never one named after the ambient GITHUB_REPOSITORY ("TechDocker").
+    doc = canonical(tmp_path, tmp_path.name)
+    doc.write_text(VALID_DOC, encoding="utf-8")
+
+    assert default_summary_source(tmp_path) == doc
+
+
+def test_ambient_github_repository_cannot_redirect_default_source(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "AdrenalIsland1/TechDocker")
+
+    # A canonical doc named after the ambient repo exists, but the supplied
+    # repo_path has no matching baseline. The helper must NOT pick the ambient
+    # "TechDocker" document; it resolves the (non-existent) dir-named canonical.
+    write_canonical(tmp_path, "TechDocker")
+
+    resolved = default_summary_source(tmp_path)
+    assert resolved.name == f"{tmp_path.name}_TechnicalDocument.md"
+    assert resolved.name != "TechDocker_TechnicalDocument.md"
+    assert not resolved.exists()  # dir-named baseline is absent -> fail loudly
+
+
+def test_resolve_canonical_baseline_stays_environment_aware_with_explicit_env(
+    tmp_path,
+):
+    # Production/explicit resolution must still honour GITHUB_REPOSITORY when an
+    # environment mapping is supplied (precedence unchanged).
+    from src.canonical_document import (
+        BASELINE_CANONICAL,
+        resolve_canonical_baseline,
+    )
+
+    write_canonical(tmp_path, "TechDocker")
+    resolved = resolve_canonical_baseline(
+        tmp_path,
+        env={"GITHUB_REPOSITORY": "AdrenalIsland1/TechDocker"},
+        remote_reader=lambda _path: None,
+    )
+    assert resolved.kind == BASELINE_CANONICAL
+    assert resolved.path.name == "TechDocker_TechnicalDocument.md"
+
+
+def test_updater_uses_env_argument_not_ambient_github_repository(
+    tmp_path, monkeypatch
+):
+    # An adversarial ambient value must not redirect the updater; it resolves
+    # from its explicit ``env`` argument (ci_env names the repo "Widget").
+    monkeypatch.setenv("GITHUB_REPOSITORY", "AdrenalIsland1/TechDocker")
+    make_repo(tmp_path)
+    write_canonical(tmp_path, "Widget")
+
+    run_update(ci_env("Widget"), repo_path=str(tmp_path))
+
+    data = json.loads(
+        (tmp_path / "artifacts" / "skeletons" / "base_skeleton.json").read_text()
+    )
+    assert data["source_summary_path"].endswith("Widget_TechnicalDocument.md")
+    # The ambient-named canonical was never created or used.
+    assert not (summaries(tmp_path) / "TechDocker_TechnicalDocument.md").exists()
+
+
+# ---------------------------------------------------------------------------
 # updater: an existing canonical document is used and never regenerated
 # ---------------------------------------------------------------------------
 def test_update_uses_canonical_as_skeleton_source(tmp_path):

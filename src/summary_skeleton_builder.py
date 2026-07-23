@@ -50,14 +50,22 @@ def default_summary_source(repo_path: str | Path = ".") -> Path:
     pollute the baseline. When neither baseline exists, the (non-existent)
     canonical path is returned so building fails loudly rather than silently
     using the reviewable copy.
+
+    Hermetic by design: the canonical name comes solely from the supplied
+    ``repo_path`` directory name. This helper does **not** read the ambient
+    ``GITHUB_REPOSITORY`` environment variable and does **not** perform a
+    git-remote lookup, so an explicitly-supplied (temporary/local) ``repo_path``
+    always resolves consistently. The real updater performs environment-aware
+    canonical resolution separately (``resolve_canonical_baseline(repo_path,
+    env)``) and passes the resolved source in explicitly.
     """
     from src.canonical_document import resolve_canonical_baseline
 
-    # Resolve the canonical document from GITHUB_REPOSITORY / the directory name
-    # only — no git subprocess here. When a repository push actually has a
-    # canonical baseline, the updater resolves it with full context and passes
-    # the exact source in, so this deterministic path is sufficient.
-    resolved = resolve_canonical_baseline(repo_path, remote_reader=lambda _path: None)
+    # env={} disables ambient GITHUB_REPOSITORY; remote_reader disables the
+    # git-remote lookup — so the canonical name is the repo directory name only.
+    resolved = resolve_canonical_baseline(
+        repo_path, env={}, remote_reader=lambda _path: None
+    )
     return resolved.path
 
 
