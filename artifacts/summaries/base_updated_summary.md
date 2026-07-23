@@ -131,6 +131,24 @@ tests/test_summary_updater.py
 - `src/summary_skeleton_store.py`
 - `src/summary_updater.py`
 
+
+<!-- TECHDOCKER_UPDATE_START -->
+### Automated Change Update - 2026-07-23 05:06 UTC
+
+Repository: TechDocker
+Branch: main
+Actor: AdrenalIsland1
+Before SHA: 9860d1da72aa393ccbfc6acdc11250a41020a81c
+After SHA: 3b9eb9e79b41dc0a6df1624612085c47e5790c31
+
+Changed files:
+- modified: src/summary_skeleton_builder.py
+- modified: tests/test_canonical_integration.py
+
+Summary:
+2 file(s) changed (2 modified): modified src/summary_skeleton_builder.py; modified tests/test_canonical_integration.py.
+<!-- TECHDOCKER_UPDATE_END -->
+
 ## Automation Pipeline
 
 - `src/automation_demo.py`
